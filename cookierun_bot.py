@@ -28,7 +28,7 @@ from PIL import Image
 # Bump this each time you rebuild the packaged app (see build.bat) so the
 # GUI's title bar shows which build is actually running, and so the update
 # checker can tell a new release apart from what's currently installed.
-APP_VERSION = "1.1.0"
+APP_VERSION = "1.1.1"
 
 # Public repo used for update checks -- see build.bat for how a new release
 # gets published there.
@@ -266,6 +266,25 @@ class Detector:
 # ==============================================================
 #  State handlers (what to click for each detected state)
 # ==============================================================
+def _is_checked_at(img, x_pct, y_pct, half_width_pct=3.0, half_height_pct=3.0):
+    """Best-effort check for whether a green checkmark icon is present at
+    this % coordinate -- used so we never blindly tap a boost checkbox that
+    the game already remembers as checked from a previous round (that would
+    just toggle it back off)."""
+    w, h = img.size
+    cx, cy = x_pct / 100.0 * w, y_pct / 100.0 * h
+    x1 = max(0, int(cx - half_width_pct / 100.0 * w))
+    x2 = min(w, int(cx + half_width_pct / 100.0 * w))
+    y1 = max(0, int(cy - half_height_pct / 100.0 * h))
+    y2 = min(h, int(cy + half_height_pct / 100.0 * h))
+    if x2 <= x1 or y2 <= y1:
+        return False
+    arr = np.asarray(img.crop((x1, y1, x2, y2)).convert("RGB")).astype(int)
+    r, g, b = arr[:, :, 0], arr[:, :, 1], arr[:, :, 2]
+    mask = (g > 140) & (g - r > 30) & (g - b > 30)
+    return bool(mask.mean() > 0.05)
+
+
 def handle(backend, state, config, log):
     if state in GUARD_STATES:
         log(f"guard state {state} -> not clicking (left for you to handle manually)")
@@ -310,20 +329,31 @@ def handle(backend, state, config, log):
         time.sleep(0.4)
         backend.tap(*buttons["multi_tab"])
     elif state == "MULTI_BUY":
+        # The boost checkboxes toggle on tap, and the game remembers your
+        # selection across rounds -- so a boost can already be checked the
+        # very first time we see this popup on a given visit. Only tap a
+        # box if it's actually unchecked right now (checked via the pixels,
+        # not guessed), otherwise tapping it would just uncheck it.
         boost_keys = config.get("selected_boost_buttons", [])
+        cur = backend.capture()
         tapped = 0
+        already_checked = 0
         for boost_key in boost_keys:
             if boost_key not in buttons:
                 log(f"selected boost '{boost_key}' has no coordinate in config.buttons -- skipping it "
                     f"(use the Coordinate Tuning tab to save it)")
                 continue
-            backend.tap(*buttons[boost_key])
+            x_pct, y_pct = buttons[boost_key]
+            if cur is not None and _is_checked_at(cur, x_pct, y_pct):
+                already_checked += 1
+                continue
+            backend.tap(x_pct, y_pct)
             time.sleep(0.3)
             tapped += 1
-        if tapped == 0:
+        if tapped == 0 and already_checked == 0:
             log("Pick Boosts popup -> no valid boosts selected -- not clicking Multi-Buy")
             return
-        log(f"Pick Boosts popup -> selected {tapped} boost(s) -> Multi-Buy")
+        log(f"Pick Boosts popup -> {tapped} tapped, {already_checked} already checked -> Multi-Buy")
         backend.tap(*buttons["multi_buy"])
     elif state == "SHOP_READY":
         log("Shop (buff ready) -> Play!")

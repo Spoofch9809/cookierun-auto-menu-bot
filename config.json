@@ -36,7 +36,9 @@
     0.05,
     0.15
   ],
-  "selected_boost_buttons": [],
+  "selected_boost_buttons": [
+    "boost_double_coins"
+  ],
   "buttons": {
     "ok": [
       36.0,
