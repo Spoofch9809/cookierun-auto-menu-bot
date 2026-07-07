@@ -28,7 +28,7 @@ from PIL import Image
 # Bump this each time you rebuild the packaged app (see build.bat) so the
 # GUI's title bar shows which build is actually running, and so the update
 # checker can tell a new release apart from what's currently installed.
-APP_VERSION = "1.0.0"
+APP_VERSION = "1.1.0"
 
 # Public repo used for update checks -- see build.bat for how a new release
 # gets published there.
@@ -285,6 +285,12 @@ def handle(backend, state, config, log):
     elif state == "LEVEL_UP":
         log("Level Up -> Confirm")
         backend.tap(*buttons["confirm"])
+    elif state == "DAILY_CHECKIN":
+        log("Daily Check-in (calendar) -> OK")
+        backend.tap(*buttons["daily_checkin_ok"])
+    elif state == "DAILY_CHECKIN_CONFIRM":
+        log("Daily Check-in (reward) -> Confirm")
+        backend.tap(*buttons["daily_checkin_confirm"])
     elif state == "LOBBY":
         log("Lobby -> Play!")
         backend.tap(*buttons["lobby_play"])

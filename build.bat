@@ -6,7 +6,7 @@ REM they live next to the exe and are picked up at runtime, not baked in.
 
 cd /d "%~dp0"
 
-py -m PyInstaller --onefile --windowed --name CookieRunAutoMenuBot ^
+py -m PyInstaller --onefile --windowed --name CookieRunAutoMenuBot --icon "%~dp0icon.ico" ^
     --distpath . --workpath build --specpath build ^
     cookierun_gui.py
 

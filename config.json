@@ -23,7 +23,7 @@
       84
     ]
   },
-  "poll_interval": 0.5,
+  "poll_interval": 0.8,
   "static_frames_needed": 2,
   "static_threshold": 2.5,
   "action_cooldown": 1.5,
@@ -69,6 +69,14 @@
     "shop_play": [
       70.0,
       85.0
+    ],
+    "daily_checkin_confirm": [
+      49.63,
+      78.16
+    ],
+    "daily_checkin_ok": [
+      49.86,
+      90.81
     ],
     "boost_double_coins": [
       22.4,

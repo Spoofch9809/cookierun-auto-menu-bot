@@ -34,12 +34,66 @@ os.chdir(_app_dir)
 
 import cookierun_bot as bot
 
+THEME = {
+    "bg": "#f7ecd8",        # cream dough
+    "bg_panel": "#efe0c0",  # slightly darker cream for tab/scrollbar chrome
+    "text": "#5b3a24",      # chocolate brown
+    "accent": "#6fbf4f",    # Cookie Run's own button green
+    "accent_dark": "#57a23c",
+    "entry_bg": "#fffdf6",
+    "border": "#c9a876",    # tan/gold
+}
+
+
+def _apply_theme(root):
+    """Cream/brown/green skin loosely matching Cookie Run's own UI. Built on
+    the 'clam' base theme because Windows' native theme (vista/winnative)
+    ignores most ttk color overrides -- clam actually respects them."""
+    t = THEME
+    root.configure(bg=t["bg"])
+
+    style = ttk.Style(root)
+    style.theme_use("clam")
+
+    style.configure(".", background=t["bg"], foreground=t["text"],
+                     fieldbackground=t["entry_bg"], bordercolor=t["border"],
+                     focuscolor=t["accent"])
+    style.configure("TFrame", background=t["bg"])
+    style.configure("TLabel", background=t["bg"], foreground=t["text"])
+    style.configure("TLabelframe", background=t["bg"], bordercolor=t["border"])
+    style.configure("TLabelframe.Label", background=t["bg"], foreground=t["text"],
+                     font=("TkDefaultFont", 9, "bold"))
+    style.configure("TCheckbutton", background=t["bg"], foreground=t["text"])
+    style.map("TCheckbutton", background=[("active", t["bg"])])
+    style.configure("TRadiobutton", background=t["bg"], foreground=t["text"])
+    style.map("TRadiobutton", background=[("active", t["bg"])])
+    style.configure("TEntry", fieldbackground=t["entry_bg"], foreground=t["text"])
+    style.configure("TCombobox", fieldbackground=t["entry_bg"], foreground=t["text"])
+    style.configure("TButton", background=t["accent"], foreground="white",
+                     bordercolor=t["accent_dark"], padding=5)
+    style.map("TButton",
+              background=[("active", t["accent_dark"]), ("disabled", "#d8d0c0")],
+              foreground=[("disabled", "#998f7c")])
+    style.configure("TNotebook", background=t["bg"], bordercolor=t["border"])
+    style.configure("TNotebook.Tab", background=t["bg_panel"], foreground=t["text"], padding=(10, 4))
+    style.map("TNotebook.Tab", background=[("selected", t["bg"])])
+    style.configure("Vertical.TScrollbar", background=t["bg_panel"], troughcolor=t["bg"],
+                     bordercolor=t["border"])
+    style.configure("Horizontal.TScrollbar", background=t["bg_panel"], troughcolor=t["bg"],
+                     bordercolor=t["border"])
+
 KNOWN_STATES = [
     "LOBBY", "SHOP_START", "MULTI_BUY", "SHOP_READY", "LEVEL_UP",
-    "RESULT", "MYSTERY_BOX", "GIFT_CONFIRM", "REVIVE", "WAIT_USER",
+    "RESULT", "MYSTERY_BOX", "GIFT_CONFIRM", "DAILY_CHECKIN", "DAILY_CHECKIN_CONFIRM",
+    "REVIVE", "WAIT_USER",
 ]
 
 BOOST_BUTTON_PREFIX = "boost_"
+
+# Temporary: only Double Coins is considered tested/ready. Other boosts show
+# up (greyed out) but can't be checked yet -- remove an entry here once
+# you've verified that boost's SHOP_READY detection actually works.
+ENABLED_BOOSTS = {"boost_double_coins"}
 
 
 def _humanize_boost_name(name):
@@ -57,7 +111,13 @@ class App:
         self.root = root
         root.title(f"Cookie Run Auto Menu Bot v{bot.APP_VERSION}")
         root.geometry("880x640")
-        root.minsize(620, 560)
+        root.minsize(540, 560)
+        if os.path.exists("icon.ico"):
+            try:
+                root.iconbitmap("icon.ico")
+            except tk.TclError:
+                pass
+        _apply_theme(root)
 
         self.config = bot.load_config()
         self.log_queue = queue.Queue()
@@ -115,56 +175,63 @@ class App:
     # ----------------------------------------------------------
     #  Controls tab
     # ----------------------------------------------------------
+    def _make_collapsible(self, parent, title, start_expanded=True):
+        """A bordered section with a +/- toggle in its header that shows or
+        hides everything below it. Returns (section, content) -- build the
+        section's actual widgets inside `content`."""
+        section = ttk.Frame(parent, relief="groove", borderwidth=1)
+        header = ttk.Frame(section, padding=(6, 4))
+        header.pack(fill="x")
+        content = ttk.Frame(section, padding=8)
+        if start_expanded:
+            content.pack(fill="x")
+
+        def toggle():
+            if content.winfo_ismapped():
+                content.pack_forget()
+                toggle_btn.configure(text="+")
+            else:
+                content.pack(fill="x")
+                toggle_btn.configure(text="−")
+
+        toggle_btn = ttk.Button(header, text="−" if start_expanded else "+", width=2, command=toggle)
+        toggle_btn.pack(side="left")
+        ttk.Label(header, text=title, font=("TkDefaultFont", 9, "bold")).pack(side="left", padx=(6, 0))
+
+        return section, content
+
     def _build_controls_tab(self, parent):
-        row1 = ttk.Frame(parent, padding=(8, 8, 8, 0))
-        row1.pack(fill="x")
+        # Each section below is one collapsible box containing plain,
+        # unbordered "chips" that re-flow into however many columns fit the
+        # window width. Keeping the border at the section level (not per
+        # chip) means uneven grid-column widths never show up as visibly
+        # empty boxes -- there's no border there to reveal the gap.
+        run_section, run_content = self._make_collapsible(parent, "Run Controls")
+        run_section.pack(fill="x", padx=8, pady=(8, 0))
+        self.run_chips_frame = ttk.Frame(run_content)
+        self.run_chips_frame.pack(fill="x", anchor="w")
+        self._build_run_chips()
+        self._run_cols = 0
+        run_section.bind("<Configure>",
+                          lambda e: self._reflow(self._run_chips, max(1, e.width // 165), "_run_cols"))
 
-        mode_frame = ttk.LabelFrame(row1, text="Mode", padding=6)
-        ttk.Radiobutton(mode_frame, text="Debug (save screenshots, no clicks)",
-                         variable=self.mode_var, value="debug",
-                         command=self._on_mode_change).pack(anchor="w")
-        ttk.Radiobutton(mode_frame, text="Run (detect + click)",
-                         variable=self.mode_var, value="run",
-                         command=self._on_mode_change).pack(anchor="w")
+        settings_section, settings_content = self._make_collapsible(parent, "Key Settings")
+        settings_section.pack(fill="x", padx=8, pady=(8, 0))
+        self.settings_chips_frame = ttk.Frame(settings_content)
+        self.settings_chips_frame.pack(fill="x", anchor="w")
+        self._build_settings_chips()
+        self._settings_cols = 0
+        settings_section.bind("<Configure>",
+                               lambda e: self._reflow(self._settings_chips, max(1, e.width // 175), "_settings_cols"))
 
-        run_frame = ttk.LabelFrame(row1, text="Bot", padding=6)
-        btn_row = ttk.Frame(run_frame)
-        btn_row.pack(anchor="w")
-        self.start_btn = ttk.Button(btn_row, text="Start", command=self._on_start)
-        self.start_btn.pack(side="left", padx=(0, 4))
-        self.stop_btn = ttk.Button(btn_row, text="Stop", command=self._on_stop, state="disabled")
-        self.stop_btn.pack(side="left")
-        ttk.Checkbutton(run_frame, text="Verbose", variable=self.verbose_var,
-                         command=self._on_verbose_change).pack(anchor="w", pady=(6, 0))
-        ttk.Label(run_frame, textvariable=self.status_var).pack(anchor="w", pady=(6, 0))
-
-        shot_frame = ttk.LabelFrame(row1, text="Screenshot", padding=6)
-        ttk.Button(shot_frame, text="Save Screenshot", command=self._on_save_screenshot).pack(anchor="w")
-        self.shot_status = ttk.Label(shot_frame, text="saves to debug_shots/")
-        self.shot_status.pack(anchor="w", pady=(6, 0))
-
-        fields_frame = ttk.LabelFrame(row1, text="Key settings", padding=6)
-        self._field_row(fields_frame, "ADB serial:", self.adb_serial_var, 0)
-        self._field_row(fields_frame, "State match threshold:", self.state_threshold_var, 1)
-        self._field_row(fields_frame, "Static threshold:", self.static_threshold_var, 2)
-        ttk.Button(fields_frame, text="Save to config.json",
-                   command=self._on_save_fields).grid(row=3, column=0, columnspan=2, pady=(6, 0), sticky="w")
-
-        # These four panels re-flow into however many columns fit the
-        # current window width, instead of a fixed side-by-side row that
-        # clips when the window is narrow.
-        self._row1_widgets = [mode_frame, run_frame, shot_frame, fields_frame]
-        self._row1_cols = 0
-        row1.bind("<Configure>", lambda e: self._reflow(self._row1_widgets, max(1, e.width // 195), "_row1_cols"))
-
-        boost_frame = ttk.LabelFrame(parent, text="Boosts to select in Shop (pick any number)", padding=6)
-        boost_frame.pack(fill="x", padx=8, pady=(8, 0))
-        self.boost_checks_frame = ttk.Frame(boost_frame)
+        boost_section, boost_content = self._make_collapsible(parent, "Boosts to select in Shop (pick any number)")
+        boost_section.pack(fill="x", padx=8, pady=(8, 0))
+        self.boost_checks_frame = ttk.Frame(boost_content)
         self.boost_checks_frame.pack(anchor="w", fill="x")
         self._boost_cols = 1
         self._rebuild_boost_checkboxes()
-        boost_frame.bind("<Configure>", self._on_boost_frame_resize)
-        ttk.Label(boost_frame, text="add more via Coordinate Tuning tab (name must start with 'boost_')",
+        boost_section.bind("<Configure>", self._on_boost_frame_resize)
+        ttk.Label(boost_content, text="add more via Coordinate Tuning tab (name must start with 'boost_')",
                   foreground="#888").pack(anchor="w", pady=(6, 0))
 
         file_frame = ttk.Frame(parent, padding=(8, 8))
@@ -174,15 +241,64 @@ class App:
 
         log_frame = ttk.LabelFrame(parent, text="Log", padding=6)
         log_frame.pack(fill="both", expand=True, padx=8, pady=(0, 8))
-        self.log_text = tk.Text(log_frame, height=10, state="disabled", wrap="word")
+        self.log_text = tk.Text(log_frame, height=10, state="disabled", wrap="word",
+                                 bg=THEME["entry_bg"], fg=THEME["text"],
+                                 insertbackground=THEME["text"], relief="flat")
         scrollbar = ttk.Scrollbar(log_frame, command=self.log_text.yview)
         self.log_text.configure(yscrollcommand=scrollbar.set)
         self.log_text.pack(side="left", fill="both", expand=True)
         scrollbar.pack(side="right", fill="y")
 
-    def _field_row(self, parent, label, var, row):
-        ttk.Label(parent, text=label).grid(row=row, column=0, sticky="w", pady=2)
-        ttk.Entry(parent, textvariable=var, width=24).grid(row=row, column=1, sticky="w", padx=(6, 0), pady=2)
+    def _build_run_chips(self):
+        parent = self.run_chips_frame
+
+        mode_chip = ttk.Frame(parent)
+        ttk.Label(mode_chip, text="Mode", font=("TkDefaultFont", 9, "bold")).pack(anchor="w")
+        ttk.Radiobutton(mode_chip, text="Debug (save only, no clicks)",
+                         variable=self.mode_var, value="debug",
+                         command=self._on_mode_change).pack(anchor="w")
+        ttk.Radiobutton(mode_chip, text="Run (detect + click)",
+                         variable=self.mode_var, value="run",
+                         command=self._on_mode_change).pack(anchor="w")
+
+        bot_chip = ttk.Frame(parent)
+        ttk.Label(bot_chip, text="Bot", font=("TkDefaultFont", 9, "bold")).pack(anchor="w")
+        btn_row = ttk.Frame(bot_chip)
+        btn_row.pack(anchor="w", pady=(2, 0))
+        self.start_btn = ttk.Button(btn_row, text="Start", command=self._on_start)
+        self.start_btn.pack(side="left", padx=(0, 4))
+        self.stop_btn = ttk.Button(btn_row, text="Stop", command=self._on_stop, state="disabled")
+        self.stop_btn.pack(side="left")
+        ttk.Checkbutton(bot_chip, text="Verbose", variable=self.verbose_var,
+                         command=self._on_verbose_change).pack(anchor="w", pady=(2, 0))
+        ttk.Label(bot_chip, textvariable=self.status_var, foreground="#555").pack(anchor="w")
+
+        shot_chip = ttk.Frame(parent)
+        ttk.Label(shot_chip, text="Screenshot", font=("TkDefaultFont", 9, "bold")).pack(anchor="w")
+        ttk.Button(shot_chip, text="Save Screenshot", command=self._on_save_screenshot).pack(anchor="w", pady=(2, 0))
+        self.shot_status = ttk.Label(shot_chip, text="saves to debug_shots/", foreground="#888")
+        self.shot_status.pack(anchor="w")
+
+        self._run_chips = [mode_chip, bot_chip, shot_chip]
+
+    def _build_settings_chips(self):
+        parent = self.settings_chips_frame
+
+        def field_chip(label_text, var):
+            chip = ttk.Frame(parent)
+            ttk.Label(chip, text=label_text).pack(anchor="w")
+            ttk.Entry(chip, textvariable=var, width=20).pack(anchor="w", pady=(2, 0))
+            return chip
+
+        adb_chip = field_chip("ADB serial:", self.adb_serial_var)
+        state_chip = field_chip("State match threshold:", self.state_threshold_var)
+        static_chip = field_chip("Static threshold:", self.static_threshold_var)
+
+        save_chip = ttk.Frame(parent)
+        ttk.Label(save_chip, text=" ").pack(anchor="w")
+        ttk.Button(save_chip, text="Save to config.json", command=self._on_save_fields).pack(anchor="w", pady=(2, 0))
+
+        self._settings_chips = [adb_chip, state_chip, static_chip, save_chip]
 
     def _reflow(self, widgets, cols, state_attr):
         """Re-grid a fixed set of panels into `cols` columns, skipping the
@@ -221,9 +337,11 @@ class App:
         for i, name in enumerate(names):
             var = tk.BooleanVar(value=name in selected)
             self.boost_vars[name] = var
-            ttk.Checkbutton(self.boost_checks_frame, text=_humanize_boost_name(name), variable=var,
-                             command=lambda n=name: self._on_boost_toggle(n)
-                             ).grid(row=i // cols, column=i % cols, sticky="w", padx=(0, 14), pady=1)
+            cb = ttk.Checkbutton(self.boost_checks_frame, text=_humanize_boost_name(name), variable=var,
+                                  command=lambda n=name: self._on_boost_toggle(n))
+            if name not in ENABLED_BOOSTS:
+                cb.state(["disabled"])
+            cb.grid(row=i // cols, column=i % cols, sticky="w", padx=(0, 14), pady=1)
 
     def _on_boost_frame_resize(self, event):
         # re-flow the boost checkboxes into however many ~160px columns fit
