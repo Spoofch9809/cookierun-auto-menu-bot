@@ -179,6 +179,17 @@ class App:
 
         threading.Thread(target=self._check_for_update_worker, daemon=True).start()
 
+        if _IS_FROZEN:
+            # The module-level cleanup_old_update_files() call up top
+            # usually loses this race: right after an update relaunches
+            # the app, the previous process is often still mid-shutdown
+            # and still holds "<exe>.old" open, so that first attempt
+            # silently no-ops. Retry once more a few seconds in, by which
+            # point the old process has had time to fully exit -- avoids
+            # leaving the leftover sitting there until the next full
+            # restart.
+            self.root.after(5000, lambda: bot.cleanup_old_update_files(_app_dir))
+
     def _check_for_update_worker(self):
         result = bot.check_for_update()
         if result:
