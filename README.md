@@ -17,18 +17,24 @@ needed.
 
 Requirements:
 - Windows
-- LDPlayer, with **ADB debugging turned off** (Settings -> Other settings).
-  The game's anti-cheat blocks launching with it on; the app uses a
-  different capture method that doesn't need it.
-- The LDPlayer window has to stay visible (not minimized) while the bot
+- LDPlayer or MuMu Player, with **ADB debugging turned off** (LDPlayer:
+  Settings -> Other settings; MuMu Player: Settings -> Other -> ADB
+  debugging). The game's anti-cheat blocks launching with it on; the app's
+  default "Window" capture backend doesn't need it.
+- The emulator window has to stay visible (not minimized) while the bot
   runs, and the game resolution should be 960x540 for the built-in
   templates to line up.
 
 ## Using it
 
-1. Set `ADB serial` isn't actually needed for the default win32 backend --
-   just leave the defaults and open the **Coordinate Tuning** tab if any
-   button ends up misaligned on your setup.
+1. On the Controls tab, under **Key Settings**, pick your **Emulator**
+   (LDPlayer or MuMu Player) -- this fills in a matching window title and
+   ADB defaults. Leave **Capture backend** on "Window"; only switch it to
+   "ADB" (and turn ADB debugging back on in the emulator) if the log shows
+   a capture/window-not-found error, which can happen if your MuMu install
+   uses a different window title or multiple instances -- edit "Window
+   title" / "ADB path" / "ADB serial" and hit Save to match your setup, or
+   open the **Coordinate Tuning** tab if any button ends up misaligned.
 2. Pick which boosts you want the bot to select in the Shop's "Pick desired
    Boosts!" popup (checkboxes on the Controls tab). Leave all unchecked to
    skip buying anything and just go straight to Play.

@@ -85,8 +85,25 @@ def _apply_theme(root):
 KNOWN_STATES = [
     "LOBBY", "SHOP_START", "MULTI_BUY", "SHOP_READY", "LEVEL_UP",
     "RESULT", "MYSTERY_BOX", "GIFT_CONFIRM", "DAILY_CHECKIN", "DAILY_CHECKIN_CONFIRM",
-    "REVIVE", "WAIT_USER",
+    "ENTERED_LEAGUE", "REVIVE", "WAIT_USER",
 ]
+
+# Defaults filled into window_title / adb_path / adb_serial when the user
+# switches emulators on the Controls tab. adb_path in particular varies by
+# emulator version/install location -- these are just sensible starting
+# points, editable (and saved) right below the radio buttons.
+EMULATOR_PRESETS = {
+    "ld": {
+        "window_title": "LDPlayer",
+        "adb_path": r"C:\LDPlayer\LDPlayer14\adb.exe",
+        "adb_serial": "emulator-5554",
+    },
+    "mumu": {
+        "window_title": "Android Device",
+        "adb_path": r"C:\Program Files\Netease\MuMuPlayer\nx_main\adb.exe",
+        "adb_serial": "127.0.0.1:7555",
+    },
+}
 
 BOOST_BUTTON_PREFIX = "boost_"
 
@@ -125,6 +142,10 @@ class App:
 
         self.mode_var = tk.StringVar(value=self.config["mode"])
         self.verbose_var = tk.BooleanVar(value=self.config["verbose"])
+        self.emulator_var = tk.StringVar(value=self.config.get("emulator", "ld"))
+        self.backend_var = tk.StringVar(value=self.config.get("backend", "win32"))
+        self.window_title_var = tk.StringVar(value=self.config.get("window_title", ""))
+        self.adb_path_var = tk.StringVar(value=self.config.get("adb_path", ""))
         self.adb_serial_var = tk.StringVar(value=self.config["adb_serial"])
         self.state_threshold_var = tk.StringVar(value=str(self.config["state_match_threshold"]))
         self.static_threshold_var = tk.StringVar(value=str(self.config["static_threshold"]))
@@ -284,11 +305,34 @@ class App:
     def _build_settings_chips(self):
         parent = self.settings_chips_frame
 
-        def field_chip(label_text, var):
+        def field_chip(label_text, var, width=20):
             chip = ttk.Frame(parent)
             ttk.Label(chip, text=label_text).pack(anchor="w")
-            ttk.Entry(chip, textvariable=var, width=20).pack(anchor="w", pady=(2, 0))
+            ttk.Entry(chip, textvariable=var, width=width).pack(anchor="w", pady=(2, 0))
             return chip
+
+        emulator_chip = ttk.Frame(parent)
+        ttk.Label(emulator_chip, text="Emulator", font=("TkDefaultFont", 9, "bold")).pack(anchor="w")
+        ttk.Radiobutton(emulator_chip, text="LDPlayer", variable=self.emulator_var,
+                         value="ld", command=self._on_emulator_change).pack(anchor="w")
+        ttk.Radiobutton(emulator_chip, text="MuMu Player", variable=self.emulator_var,
+                         value="mumu", command=self._on_emulator_change).pack(anchor="w")
+
+        backend_chip = ttk.Frame(parent)
+        ttk.Label(backend_chip, text="Capture backend", font=("TkDefaultFont", 9, "bold")).pack(anchor="w")
+        ttk.Radiobutton(backend_chip, text="Window (recommended)", variable=self.backend_var,
+                         value="win32", command=self._on_backend_change).pack(anchor="w")
+        ttk.Radiobutton(backend_chip, text="ADB", variable=self.backend_var,
+                         value="adb", command=self._on_backend_change).pack(anchor="w")
+
+        window_title_chip = field_chip("Window title:", self.window_title_var)
+
+        adb_path_chip = ttk.Frame(parent)
+        ttk.Label(adb_path_chip, text="ADB path:").pack(anchor="w")
+        adb_path_row = ttk.Frame(adb_path_chip)
+        adb_path_row.pack(anchor="w", pady=(2, 0))
+        ttk.Entry(adb_path_row, textvariable=self.adb_path_var, width=24).pack(side="left")
+        ttk.Button(adb_path_row, text="Detect", width=7, command=self._on_detect_adb).pack(side="left", padx=(4, 0))
 
         adb_chip = field_chip("ADB serial:", self.adb_serial_var)
         state_chip = field_chip("State match threshold:", self.state_threshold_var)
@@ -298,7 +342,8 @@ class App:
         ttk.Label(save_chip, text=" ").pack(anchor="w")
         ttk.Button(save_chip, text="Save to config.json", command=self._on_save_fields).pack(anchor="w", pady=(2, 0))
 
-        self._settings_chips = [adb_chip, state_chip, static_chip, save_chip]
+        self._settings_chips = [emulator_chip, backend_chip, window_title_chip, adb_path_chip,
+                                 adb_chip, state_chip, static_chip, save_chip]
 
     def _reflow(self, widgets, cols, state_attr):
         """Re-grid a fixed set of panels into `cols` columns, skipping the
@@ -365,6 +410,36 @@ class App:
     def _on_verbose_change(self):
         self.config["verbose"] = bool(self.verbose_var.get())
 
+    def _on_emulator_change(self):
+        emulator = self.emulator_var.get()
+        preset = EMULATOR_PRESETS.get(emulator, {})
+        detected = bot.find_adb_path(emulator)
+        self.window_title_var.set(preset.get("window_title", ""))
+        self.adb_path_var.set(detected or preset.get("adb_path", ""))
+        self.adb_serial_var.set(preset.get("adb_serial", ""))
+        self.config["emulator"] = emulator
+        self.config["window_title"] = self.window_title_var.get()
+        self.config["adb_path"] = self.adb_path_var.get()
+        self.config["adb_serial"] = self.adb_serial_var.get()
+        bot.save_config(self.config)
+        found_note = "found on this PC" if detected else "guessed -- not found on this PC, use Detect or edit by hand"
+        self._log(f"emulator -> {emulator} (window title / ADB serial reset to defaults; "
+                   f"ADB path {found_note}: {self.adb_path_var.get()})")
+
+    def _on_backend_change(self):
+        self.config["backend"] = self.backend_var.get()
+        bot.save_config(self.config)
+        self._log(f"capture backend -> {self.config['backend']}")
+
+    def _on_detect_adb(self):
+        path = bot.find_adb_path(self.emulator_var.get())
+        if path:
+            self.adb_path_var.set(path)
+            self._log(f"found adb.exe -> {path} (click Save to config.json to keep it)")
+        else:
+            self._log("couldn't find adb.exe under common install locations -- "
+                       "browse your emulator's install folder and paste the path in by hand")
+
     def _on_start(self):
         self.start_btn.configure(state="disabled")
 
@@ -415,6 +490,8 @@ class App:
         except ValueError:
             messagebox.showerror("Invalid value", "Thresholds must be numbers.")
             return
+        self.config["window_title"] = self.window_title_var.get().strip()
+        self.config["adb_path"] = self.adb_path_var.get().strip()
         self.config["adb_serial"] = self.adb_serial_var.get().strip()
         self.config["state_match_threshold"] = state_threshold
         self.config["static_threshold"] = static_threshold
@@ -434,6 +511,10 @@ class App:
         self.config.update(fresh)
         self.mode_var.set(self.config["mode"])
         self.verbose_var.set(self.config["verbose"])
+        self.emulator_var.set(self.config.get("emulator", "ld"))
+        self.backend_var.set(self.config.get("backend", "win32"))
+        self.window_title_var.set(self.config.get("window_title", ""))
+        self.adb_path_var.set(self.config.get("adb_path", ""))
         self.adb_serial_var.set(self.config["adb_serial"])
         self.state_threshold_var.set(str(self.config["state_match_threshold"]))
         self.static_threshold_var.set(str(self.config["static_threshold"]))

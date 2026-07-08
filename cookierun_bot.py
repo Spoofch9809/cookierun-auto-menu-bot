@@ -13,6 +13,7 @@ Safety invariants (do not weaken):
     UNKNOWN and is never clicked.
 """
 
+import glob
 import io
 import json
 import os
@@ -28,7 +29,7 @@ from PIL import Image
 # Bump this each time you rebuild the packaged app (see build.bat) so the
 # GUI's title bar shows which build is actually running, and so the update
 # checker can tell a new release apart from what's currently installed.
-APP_VERSION = "1.1.1"
+APP_VERSION = "1.2.0"
 
 # Public repo used for update checks -- see build.bat for how a new release
 # gets published there.
@@ -61,6 +62,33 @@ DEFAULTS = {
 
 # States that must never be clicked, no matter what.
 GUARD_STATES = {"REVIVE", "WAIT_USER"}
+
+# Glob patterns checked (in order) when auto-detecting each emulator's
+# bundled adb.exe -- install paths vary by version/edition, so this is a
+# best-effort search, not a guarantee. Used by find_adb_path(), which the
+# GUI's "Detect" button calls so a fresh install doesn't need the exact
+# path hand-typed.
+ADB_PATH_GLOBS = {
+    "ld": [
+        r"C:\LDPlayer\LDPlayer*\adb.exe",
+        r"C:\Program Files\LDPlayer\LDPlayer*\adb.exe",
+    ],
+    "mumu": [
+        r"C:\Program Files\Netease\MuMuPlayer\nx_main\adb.exe",
+        r"C:\Program Files\Netease\MuMuPlayer*\**\adb.exe",
+        r"C:\Program Files (x86)\Netease\MuMuPlayer*\**\adb.exe",
+    ],
+}
+
+
+def find_adb_path(emulator):
+    """Best-effort search of common install locations for this emulator's
+    bundled adb.exe. Returns the first existing match, or None."""
+    for pattern in ADB_PATH_GLOBS.get(emulator, []):
+        for path in sorted(glob.glob(pattern, recursive=True)):
+            if os.path.isfile(path):
+                return path
+    return None
 
 
 # ==============================================================
@@ -116,10 +144,80 @@ class AdbBackend:
         self._adb("shell", "input", "swipe", str(x), str(y), str(x), str(y), str(hold))
 
 
+def _resolve_child_chain(win32gui, hwnd, chain):
+    """Walks each (class_name, window_text) hop and returns the list of
+    hwnds resolved along the way (same length as chain), or None if any
+    hop fails."""
+    hwnds = []
+    cur = hwnd
+    for class_name, window_text in chain:
+        cur = win32gui.FindWindowEx(cur, 0, class_name, window_text)
+        if not cur:
+            return None
+        hwnds.append(cur)
+    return hwnds
+
+
+def _find_render_chain(win32gui, window_title, chain):
+    """Resolve a chain of nested child windows down to the emulator's
+    render surface, returning the hwnd at every hop. Tries the configured
+    window_title first (fast path), then -- since the exact title can
+    differ by locale/emulator version/multi-instance naming while the
+    internal class-name chain tends not to -- falls back to scanning every
+    visible top-level window for one whose children match the chain."""
+    tried = set()
+    if window_title:
+        top = win32gui.FindWindow(None, window_title)
+        if top:
+            tried.add(top)
+            hwnds = _resolve_child_chain(win32gui, top, chain)
+            if hwnds:
+                return hwnds
+
+    candidates = []
+
+    def cb(hwnd, _):
+        if win32gui.IsWindowVisible(hwnd):
+            candidates.append(hwnd)
+        return True
+
+    win32gui.EnumWindows(cb, None)
+    for top in candidates:
+        if top in tried:
+            continue
+        hwnds = _resolve_child_chain(win32gui, top, chain)
+        if hwnds:
+            return hwnds
+    return None
+
+
 # ==============================================================
 #  Backend: win32 (optional -- only imports pywin32 if selected)
 # ==============================================================
 class Win32Backend:
+    # Each entry is a chain of (class_name, window_text) hops from the
+    # top-level window down to the actual render surface -- FindWindowEx
+    # only searches *immediate* children, so a surface nested more than one
+    # level deep (e.g. MuMu's Android Device -> MuMuNxDevice -> nemudisplay)
+    # needs one hop per level. Either side of a pair can be None to match
+    # on just the other.
+    CHILD_CHAINS = {
+        "ld": [("RenderWindow", "TheRender")],
+        "mumu": [(None, "MuMuNxDevice"), ("nemuwin", "nemudisplay")],
+    }
+
+    # Index (into the resolved hop list above) of the hwnd that should
+    # actually receive posted mouse messages. Usually this is the same
+    # window we capture pixels from (-1, the leaf), but MuMu's leaf
+    # (nemuwin/nemudisplay) is a pure GPU presentation surface that
+    # silently swallows WM_LBUTTONDOWN/UP -- verified live: posting to it
+    # produces zero screen change, while posting the identical click one
+    # hop up (MuMuNxDevice, the actual Qt window) works.
+    INPUT_HOP = {
+        "ld": -1,
+        "mumu": -2,
+    }
+
     def __init__(self, config, log=print):
         import win32gui, win32con, win32api, win32ui
         import ctypes
@@ -127,14 +225,17 @@ class Win32Backend:
         self.ctypes = ctypes
         self.config = config
         self.log = log
-        self.child = {"ld": ("RenderWindow", "TheRender"),
-                      "mumu": ("subWin", "sub")}[config["emulator"]]
-        parent = win32gui.FindWindow(None, config["window_title"])
-        if not parent:
-            raise RuntimeError(f"window '{config['window_title']}' not found")
-        self.hwnd = win32gui.FindWindowEx(parent, 0, *self.child)
-        if not self.hwnd:
-            raise RuntimeError("render window (inner game surface) not found")
+        emulator = config["emulator"]
+        chain = self.CHILD_CHAINS[emulator]
+        hwnds = _find_render_chain(win32gui, config.get("window_title"), chain)
+        if not hwnds:
+            raise RuntimeError(
+                f"render window (inner game surface) not found -- tried window_title="
+                f"{config.get('window_title')!r} plus a scan of all visible windows. "
+                f"Make sure the emulator is open and its window isn't minimized."
+            )
+        self.hwnd = hwnds[-1]
+        self.input_hwnd = hwnds[self.INPUT_HOP[emulator]]
 
     def _size(self):
         _, _, r, b = self.g.GetClientRect(self.hwnd)
@@ -168,10 +269,16 @@ class Win32Backend:
             return
         x, y = _jitter_to_px(x_pct, y_pct, w, h, self.config)
         time.sleep(random.uniform(*self.config["pre_delay"]))
-        lparam = self.a.MAKELONG(x, y)
-        self.g.PostMessage(self.hwnd, self.c.WM_LBUTTONDOWN, self.c.MK_LBUTTON, lparam)
+        # x,y are relative to the capture surface (self.hwnd); the window
+        # that actually receives clicks (self.input_hwnd) can be a
+        # different window with a different origin/size, so re-map through
+        # screen coordinates rather than assuming they line up.
+        screen_pt = self.g.ClientToScreen(self.hwnd, (x, y))
+        tx, ty = self.g.ScreenToClient(self.input_hwnd, screen_pt)
+        lparam = self.a.MAKELONG(tx, ty)
+        self.g.PostMessage(self.input_hwnd, self.c.WM_LBUTTONDOWN, self.c.MK_LBUTTON, lparam)
         time.sleep(random.uniform(*self.config["hold_ms"]) / 1000.0)
-        self.g.PostMessage(self.hwnd, self.c.WM_LBUTTONUP, 0, lparam)
+        self.g.PostMessage(self.input_hwnd, self.c.WM_LBUTTONUP, 0, lparam)
 
 
 def make_backend(config, log=print):
@@ -301,6 +408,9 @@ def handle(backend, state, config, log):
     elif state == "GIFT_CONFIRM":
         log("Reward -> Confirm")
         backend.tap(*buttons["confirm"])
+    elif state == "ENTERED_LEAGUE":
+        log("Entered League -> Confirm")
+        backend.tap(*buttons["entered_league_confirm"])
     elif state == "LEVEL_UP":
         log("Level Up -> Confirm")
         backend.tap(*buttons["confirm"])

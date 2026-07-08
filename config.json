@@ -1,9 +1,9 @@
 {
   "backend": "win32",
-  "window_title": "LDPlayer",
-  "emulator": "ld",
-  "adb_path": "C:\\LDPlayer\\LDPlayer14\\adb.exe",
-  "adb_serial": "emulator-5554",
+  "window_title": "Android Device",
+  "emulator": "mumu",
+  "adb_path": "C:\\Program Files\\Netease\\MuMuPlayer\\nx_main\\adb.exe",
+  "adb_serial": "127.0.0.1:7555",
   "mode": "run",
   "debug_dir": "debug_shots",
   "verbose": true,
@@ -36,9 +36,7 @@
     0.05,
     0.15
   ],
-  "selected_boost_buttons": [
-    "boost_double_coins"
-  ],
+  "selected_boost_buttons": [],
   "buttons": {
     "ok": [
       36.0,
@@ -51,6 +49,10 @@
     "confirm": [
       50.0,
       90.0
+    ],
+    "entered_league_confirm": [
+      49.96,
+      63.28
     ],
     "lobby_play": [
       74.0,
