@@ -29,7 +29,7 @@ from PIL import Image
 # Bump this each time you rebuild the packaged app (see build.bat) so the
 # GUI's title bar shows which build is actually running, and so the update
 # checker can tell a new release apart from what's currently installed.
-APP_VERSION = "1.2.0"
+APP_VERSION = "1.3.0"
 
 # Public repo used for update checks -- see build.bat for how a new release
 # gets published there.
@@ -584,9 +584,11 @@ def _parse_version(v):
 
 
 def check_for_update(current_version=APP_VERSION, repo=GITHUB_REPO, timeout=5):
-    """Returns (latest_version, download_page_url) if a newer release is
-    published on GitHub, or None if up to date / offline / anything went
-    wrong. Never raises."""
+    """Returns (latest_version, download_page_url, asset_zip_url) if a newer
+    release is published on GitHub, or None if up to date / offline /
+    anything went wrong. asset_zip_url is None if the release has no zip
+    asset attached (e.g. a source-only tag) -- callers should fall back to
+    opening download_page_url in that case. Never raises."""
     try:
         url = f"https://api.github.com/repos/{repo}/releases/latest"
         req = urllib.request.Request(url, headers={"Accept": "application/vnd.github+json"})
@@ -595,7 +597,98 @@ def check_for_update(current_version=APP_VERSION, repo=GITHUB_REPO, timeout=5):
         latest = data.get("tag_name", "")
         page_url = data.get("html_url", f"https://github.com/{repo}/releases/latest")
         if latest and _parse_version(latest) > _parse_version(current_version):
-            return latest, page_url
+            asset_url = None
+            for asset in data.get("assets", []):
+                name = asset.get("name", "")
+                if name.lower().startswith("cookierunautomenubot") and name.lower().endswith(".zip"):
+                    asset_url = asset.get("browser_download_url")
+                    break
+            return latest, page_url, asset_url
     except Exception:
         pass
     return None
+
+
+def _swap_file(path, new_bytes):
+    """Writes new_bytes to `path`, first moving anything already there
+    aside as `<path>.old`. Renaming a locked/running file works on
+    Windows (the loader opens it with FILE_SHARE_DELETE) -- overwriting
+    its contents in place does not, since the running process still has
+    it mapped. Verified live: renaming this app's own exe out from under
+    itself while it's running leaves the process completely unaffected
+    and immediately frees the original name up for the new file."""
+    old_path = path + ".old"
+    if os.path.exists(old_path):
+        try:
+            os.remove(old_path)
+        except OSError:
+            pass  # still locked from an update before last -- harmless, left for next cleanup
+    if os.path.exists(path):
+        os.rename(path, old_path)
+    with open(path, "wb") as f:
+        f.write(new_bytes)
+
+
+def cleanup_old_update_files(app_dir, exe_name="CookieRunAutoMenuBot.exe"):
+    """Best-effort removal of '<file>.old' leftovers from a previous
+    update. The old exe/icon can't be deleted until the process that had
+    it open has fully exited, which isn't guaranteed the moment the new
+    one launches -- so this runs on startup instead, once it's safe. A
+    no-op (and safe to call every startup) when there's nothing to clean."""
+    for name in (exe_name, "icon.ico"):
+        old_path = os.path.join(app_dir, name + ".old")
+        if os.path.exists(old_path):
+            try:
+                os.remove(old_path)
+            except OSError:
+                pass
+
+
+def apply_update(asset_zip_url, app_dir, exe_name="CookieRunAutoMenuBot.exe", log=print, timeout=30):
+    """Downloads the release zip and swaps the new exe (+ icon) into place
+    via _swap_file, then launches it. Returns True once the new exe has
+    been launched (the caller should then close this process) or False on
+    failure (logged; nothing on disk touched in that case).
+
+    An earlier version of this used an external relauncher .bat (wait for
+    this PID to exit, copy files over, self-delete) instead of an in-place
+    rename. Dropped after live testing: antivirus silently deleted the
+    generated script mid-run, since "drop an exe, launch it, self-delete"
+    matches a common dropper heuristic. The rename approach needs no
+    helper script at all, so there's nothing for AV to flag."""
+    import zipfile
+
+    exe_path = os.path.join(app_dir, exe_name)
+    icon_path = os.path.join(app_dir, "icon.ico")
+
+    try:
+        log(f"downloading update from {asset_zip_url} ...")
+        req = urllib.request.Request(asset_zip_url, headers={"Accept": "application/octet-stream"})
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            zip_bytes = resp.read()
+
+        with zipfile.ZipFile(io.BytesIO(zip_bytes)) as zf:
+            names = set(zf.namelist())
+            if exe_name not in names:
+                log(f"update failed: {exe_name} not found inside the downloaded zip")
+                return False
+            new_exe_bytes = zf.read(exe_name)
+            new_icon_bytes = zf.read("icon.ico") if "icon.ico" in names else None
+
+        _swap_file(exe_path, new_exe_bytes)
+        if new_icon_bytes is not None:
+            _swap_file(icon_path, new_icon_bytes)
+
+        DETACHED_PROCESS = 0x00000008
+        CREATE_NEW_PROCESS_GROUP = 0x00000200
+        subprocess.Popen(
+            [exe_path],
+            cwd=app_dir,
+            creationflags=DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP,
+            close_fds=True,
+        )
+        log("update installed -- relaunching...")
+        return True
+    except Exception as e:
+        log(f"update failed: {e}")
+        return False

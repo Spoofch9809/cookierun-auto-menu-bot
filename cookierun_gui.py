@@ -26,13 +26,21 @@ from PIL import ImageTk
 # Anchor to the app's own folder so config.json/templates/debug_shots are
 # always found next to the exe (or this script), regardless of whatever
 # directory the app happened to be launched from.
-if getattr(sys, "frozen", False):
+_IS_FROZEN = getattr(sys, "frozen", False)
+if _IS_FROZEN:
     _app_dir = os.path.dirname(sys.executable)
 else:
     _app_dir = os.path.dirname(os.path.abspath(__file__))
 os.chdir(_app_dir)
 
 import cookierun_bot as bot
+
+if _IS_FROZEN:
+    # Sweep up a "<exe>.old" left behind by a previous in-place update --
+    # see apply_update()/cleanup_old_update_files() in cookierun_bot.py.
+    # No-op almost every launch; only does anything the run right after
+    # an update.
+    bot.cleanup_old_update_files(_app_dir)
 
 THEME = {
     "bg": "#f7ecd8",        # cream dough
@@ -174,24 +182,56 @@ class App:
     def _check_for_update_worker(self):
         result = bot.check_for_update()
         if result:
-            latest, url = result
-            self.root.after(0, lambda: self._show_update_banner(latest, url))
+            latest, page_url, asset_url = result
+            self.root.after(0, lambda: self._show_update_banner(latest, page_url, asset_url))
 
-    def _show_update_banner(self, latest_version, url):
+    def _show_update_banner(self, latest_version, page_url, asset_url):
         # Plain tk widgets (not ttk) so the highlight color reliably shows
         # up regardless of the active ttk theme.
-        self._update_url = url
+        self._update_url = page_url
+        self._update_asset_url = asset_url
         banner = tk.Frame(self.root, bg="#fff3cd", padx=8, pady=6)
-        tk.Label(banner, text=f"Update available: {latest_version} (you have v{bot.APP_VERSION})",
-                 bg="#fff3cd").pack(side="left")
+        self._update_label_var = tk.StringVar(
+            value=f"Update available: {latest_version} (you have v{bot.APP_VERSION})")
+        tk.Label(banner, textvariable=self._update_label_var, bg="#fff3cd").pack(side="left")
+        # Update Now needs a real exe on disk to replace -- only offer it
+        # for the packaged app (not "py cookierun_gui.py" from source), and
+        # only if the release actually has a zip asset attached.
+        if _IS_FROZEN and asset_url:
+            self.update_now_btn = ttk.Button(banner, text="Update Now", command=self._on_update_now)
+            self.update_now_btn.pack(side="left", padx=(8, 0))
         ttk.Button(banner, text="Download", command=self._on_download_update).pack(side="left", padx=(8, 0))
-        ttk.Button(banner, text="Dismiss", command=banner.destroy).pack(side="left", padx=(4, 0))
+        self.update_dismiss_btn = ttk.Button(banner, text="Dismiss", command=banner.destroy)
+        self.update_dismiss_btn.pack(side="left", padx=(4, 0))
         banner.pack(fill="x", before=self.root.winfo_children()[0])
         self.update_banner = banner
 
     def _on_download_update(self):
         if self._update_url:
             webbrowser.open(self._update_url)
+
+    def _on_update_now(self):
+        self.update_now_btn.configure(state="disabled")
+        self.update_dismiss_btn.configure(state="disabled")
+        self._update_label_var.set("Downloading update...")
+
+        def worker():
+            ok = bot.apply_update(self._update_asset_url, _app_dir, log=self._log)
+            self.root.after(0, lambda: self._after_update_apply(ok))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _after_update_apply(self, ok):
+        if ok:
+            # The relauncher is already waiting for this process to exit --
+            # close everything down so it can copy the new exe in and
+            # start it back up.
+            self._on_close()
+            return
+        self._update_label_var.set("Update download failed (see log) -- click Update Now to retry, "
+                                    "or use Download instead")
+        self.update_now_btn.configure(state="normal")
+        self.update_dismiss_btn.configure(state="normal")
 
     # ----------------------------------------------------------
     #  Controls tab
