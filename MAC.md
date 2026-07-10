@@ -23,10 +23,15 @@ git merge origin/main     # catch up on anything released from the PC
 When done working on the Mac:
 
 ```
-git add -A
+git add <the files you changed>   # NOT -A: config.json must stay uncommitted
 git commit -m "mac: <what changed>"
 git push                  # un-pushed commits are invisible to the PC!
 ```
+
+Never commit `config.json` -- it's per-machine live state (Mac backend/
+adb path/serial + session boost memory), and the Windows release zip
+packages main's copy verbatim, so a Mac config merged to main ships
+broken Windows builds. See CLAUDE.md's hard-won lessons.
 
 Back on the PC, to bring Mac work into a release:
 

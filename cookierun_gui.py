@@ -271,8 +271,11 @@ class App:
         tk.Label(banner, textvariable=self._update_label_var, bg="#fff3cd").pack(side="left")
         # Update Now needs a real exe on disk to replace -- only offer it
         # for the packaged app (not "py cookierun_gui.py" from source), and
-        # only if the release actually has a zip asset attached.
-        if _IS_FROZEN and asset_url:
+        # only if the release actually has a zip asset attached. Windows
+        # only: apply_update() downloads the Windows zip and swaps the exe,
+        # so on the frozen Mac app the button was a dead end ("exe not
+        # found inside the downloaded zip") -- Mac users get Download.
+        if _IS_FROZEN and asset_url and sys.platform == "win32":
             self.update_now_btn = ttk.Button(banner, text="Update Now", command=self._on_update_now)
             self.update_now_btn.pack(side="left", padx=(8, 0))
         ttk.Button(banner, text="Download", command=self._on_download_update).pack(side="left", padx=(8, 0))

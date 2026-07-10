@@ -37,6 +37,16 @@ progress on the `mac` branch (see MAC.md).
   protect the file). Always monkeypatch first in test scripts:
   `bot.save_config = lambda cfg, path=None: None`. This has silently
   clobbered the user's live settings twice.
+- **Never commit config.json from the Mac** (and in general treat it as
+  per-machine live state, not source): main's copy is the Windows one
+  (backend "win32", Windows adb path) and make_release_zip.py ships it
+  VERBATIM into the Windows zip -- merging a Mac config.json to main
+  would release Windows builds that boot with backend "adb" and a
+  macOS adb path (dead on arrival). It also carries session boost
+  selections/memory. On the Mac, stage files explicitly (`git add
+  <files>`, never `git add -A`) and leave config.json modified in the
+  working tree. If it ever slips into a merge, resolve with
+  `git checkout --ours config.json` on the PC.
 - **MuMu window capture** (`Win32Backend`): the render surface is nested
   two levels deep (`Android Device` -> `MuMuNxDevice` ->
   `nemuwin`/`nemudisplay`) -- see `CHILD_CHAINS`. Capture reads the leaf,
