@@ -115,15 +115,31 @@ EMULATOR_PRESETS = {
 
 BOOST_BUTTON_PREFIX = "boost_"
 
-# Temporary: only Double Coins is considered tested/ready. Other boosts show
-# up (greyed out) but can't be checked yet -- remove an entry here once
+# Temporary: only these are considered tested/ready. Other boosts show up
+# (greyed out) but can't be checked yet -- remove an entry here once
 # you've verified that boost's SHOP_READY detection actually works.
-ENABLED_BOOSTS = {"boost_double_coins"}
+ENABLED_BOOSTS = {"boost_double_coins", "boost_magnetic_aura"}
+
+# Direct-buy tiles in SHOP_START's own "Buy some Boosts!" panel (Double XP /
+# HP Extension / Power Jelly Boost) -- a separate purchase flow from the
+# boost_* checkboxes above (those live in the MULTI_BUY popup reached via
+# the Random Boost box + Multi tab). Kept as a distinct prefix/list
+# (selected_shop_boosts) so the two flows don't get tangled together.
+SHOP_BOOST_PREFIX = "shop_boost_"
+ENABLED_SHOP_BOOSTS = {"shop_boost_double_xp", "shop_boost_hp_extension", "shop_boost_power_jelly_boost"}
+
+# Display order for the direct-buy checkboxes -- matches the order asked
+# for, not alphabetical. Anything not listed here (e.g. a new one added
+# later via Coordinate Tuning) just sorts alphabetically after these.
+SHOP_BOOST_ORDER = ["shop_boost_hp_extension", "shop_boost_power_jelly_boost", "shop_boost_double_xp"]
 
 
 def _humanize_boost_name(name):
-    label = name[len(BOOST_BUTTON_PREFIX):] if name.startswith(BOOST_BUTTON_PREFIX) else name
-    words = [("HP" if w.lower() == "hp" else w.capitalize()) for w in label.split("_")]
+    for prefix in (BOOST_BUTTON_PREFIX, SHOP_BOOST_PREFIX):
+        if name.startswith(prefix):
+            name = name[len(prefix):]
+            break
+    words = [("HP" if w.lower() == "hp" else w.capitalize()) for w in name.split("_")]
     return " ".join(words)
 
 MAX_CANVAS_W = 900
@@ -145,6 +161,15 @@ class App:
         _apply_theme(root)
 
         self.config = bot.load_config()
+        # The bot's remembered boost state (shop_boost_state /
+        # multi_buy_active) only stays accurate while the bot is the only
+        # thing tapping those toggles. Across app sessions that doesn't
+        # hold -- the game may have been restarted or tiles tapped by hand
+        # in between -- so every GUI open starts from a clean slate, same
+        # as pressing the Reset button. (The Reset button still exists for
+        # mid-session manual fiddling.)
+        if self.config.get("shop_boost_state") or self.config.get("multi_buy_active"):
+            bot.reset_boost_memory(self.config)
         self.log_queue = queue.Queue()
         self.bot = bot.Bot(self.config, log=self.log_queue.put)
 
@@ -159,6 +184,7 @@ class App:
         self.static_threshold_var = tk.StringVar(value=str(self.config["static_threshold"]))
         self.status_var = tk.StringVar(value="stopped")
         self.boost_vars = {}  # button name -> BooleanVar, built in _rebuild_boost_checkboxes
+        self.shop_boost_vars = {}  # button name -> BooleanVar, built in _rebuild_shop_boost_checkboxes
 
         self.update_banner = None  # built lazily in _show_update_banner
         self._update_url = None
@@ -306,6 +332,18 @@ class App:
         ttk.Label(boost_content, text="add more via Coordinate Tuning tab (name must start with 'boost_')",
                   foreground="#888").pack(anchor="w", pady=(6, 0))
 
+        shop_boost_section, shop_boost_content = self._make_collapsible(
+            parent, "Direct-buy boosts in Shop screen (pick any number)")
+        shop_boost_section.pack(fill="x", padx=8, pady=(8, 0))
+        self.shop_boost_checks_frame = ttk.Frame(shop_boost_content)
+        self.shop_boost_checks_frame.pack(anchor="w", fill="x")
+        self._shop_boost_cols = 1
+        self._rebuild_shop_boost_checkboxes()
+        shop_boost_section.bind("<Configure>", self._on_shop_boost_frame_resize)
+        ttk.Label(shop_boost_content,
+                  text="add more via Coordinate Tuning tab (name must start with 'shop_boost_')",
+                  foreground="#888").pack(anchor="w", pady=(6, 0))
+
         file_frame = ttk.Frame(parent, padding=(8, 8))
         file_frame.pack(fill="x")
         ttk.Button(file_frame, text="Open config.json", command=self._on_open_config).pack(side="left")
@@ -351,7 +389,12 @@ class App:
         self.shot_status = ttk.Label(shot_chip, text="saves to debug_shots/", foreground="#888")
         self.shot_status.pack(anchor="w")
 
-        self._run_chips = [mode_chip, bot_chip, shot_chip]
+        memory_chip = ttk.Frame(parent)
+        ttk.Label(memory_chip, text="Boost Memory", font=("TkDefaultFont", 9, "bold")).pack(anchor="w")
+        ttk.Button(memory_chip, text="Reset", command=self._on_reset_boost_memory).pack(anchor="w", pady=(2, 0))
+        ttk.Label(memory_chip, text="if you tapped boosts by hand", foreground="#888").pack(anchor="w")
+
+        self._run_chips = [mode_chip, bot_chip, shot_chip, memory_chip]
 
     def _build_settings_chips(self):
         parent = self.settings_chips_frame
@@ -454,6 +497,45 @@ class App:
         bot.save_config(self.config)
         self._log(f"boosts to select in Shop -> {selected}")
 
+    def _shop_boost_button_names(self):
+        names = [n for n in self.config.get("buttons", {}) if n.startswith(SHOP_BOOST_PREFIX)]
+
+        def sort_key(name):
+            try:
+                return (0, SHOP_BOOST_ORDER.index(name))
+            except ValueError:
+                return (1, name)
+
+        return sorted(names, key=sort_key)
+
+    def _rebuild_shop_boost_checkboxes(self):
+        for child in self.shop_boost_checks_frame.winfo_children():
+            child.destroy()
+        selected = set(self.config.get("selected_shop_boosts", []))
+        self.shop_boost_vars = {}
+        names = self._shop_boost_button_names()
+        cols = max(1, self._shop_boost_cols)
+        for i, name in enumerate(names):
+            var = tk.BooleanVar(value=name in selected)
+            self.shop_boost_vars[name] = var
+            cb = ttk.Checkbutton(self.shop_boost_checks_frame, text=_humanize_boost_name(name), variable=var,
+                                  command=lambda n=name: self._on_shop_boost_toggle(n))
+            if name not in ENABLED_SHOP_BOOSTS:
+                cb.state(["disabled"])
+            cb.grid(row=i // cols, column=i % cols, sticky="w", padx=(0, 14), pady=1)
+
+    def _on_shop_boost_frame_resize(self, event):
+        cols = max(1, event.width // 160)
+        if cols != self._shop_boost_cols:
+            self._shop_boost_cols = cols
+            self._rebuild_shop_boost_checkboxes()
+
+    def _on_shop_boost_toggle(self, name):
+        selected = [n for n, v in self.shop_boost_vars.items() if v.get()]
+        self.config["selected_shop_boosts"] = selected
+        bot.save_config(self.config)
+        self._log(f"direct-buy boosts to activate in Shop -> {selected}")
+
     def _on_mode_change(self):
         self.config["mode"] = self.mode_var.get()
         self._log(f"mode -> {self.config['mode']}")
@@ -534,6 +616,11 @@ class App:
 
         threading.Thread(target=worker, daemon=True).start()
 
+    def _on_reset_boost_memory(self):
+        bot.reset_boost_memory(self.config)
+        self._log("boost memory reset -- next sync re-checks everything from scratch "
+                   "instead of trusting what it remembered")
+
     def _on_save_fields(self):
         try:
             state_threshold = float(self.state_threshold_var.get())
@@ -570,6 +657,7 @@ class App:
         self.state_threshold_var.set(str(self.config["state_match_threshold"]))
         self.static_threshold_var.set(str(self.config["static_threshold"]))
         self._rebuild_boost_checkboxes()
+        self._rebuild_shop_boost_checkboxes()
         self._log("reloaded config.json from disk")
         self._refresh_overlay()
 
@@ -757,6 +845,7 @@ class App:
         values = sorted(self.config["buttons"].keys())
         self.button_combo.configure(values=values)
         self._rebuild_boost_checkboxes()
+        self._rebuild_shop_boost_checkboxes()
         self._log(f"button '{name}' -> {self._last_point_pct}")
         self._refresh_overlay()
 

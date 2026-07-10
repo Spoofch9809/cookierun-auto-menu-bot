@@ -29,7 +29,7 @@ from PIL import Image
 # Bump this each time you rebuild the packaged app (see build.bat) so the
 # GUI's title bar shows which build is actually running, and so the update
 # checker can tell a new release apart from what's currently installed.
-APP_VERSION = "1.3.2"
+APP_VERSION = "1.4.0"
 
 # Public repo used for update checks -- see build.bat for how a new release
 # gets published there.
@@ -57,6 +57,9 @@ DEFAULTS = {
     "hold_ms": [40, 90],
     "pre_delay": [0.05, 0.15],
     "selected_boost_buttons": ["boost_double_coins"],
+    "selected_shop_boosts": [],
+    "multi_buy_active": None,
+    "shop_boost_state": {},
     "buttons": {},
 }
 
@@ -106,6 +109,19 @@ def load_config(path=CONFIG_PATH):
 def save_config(cfg, path=CONFIG_PATH):
     with open(path, "w", encoding="utf-8") as f:
         json.dump(cfg, f, indent=2, ensure_ascii=False)
+
+
+def reset_boost_memory(config):
+    """Clears the bot's remembered direct-buy-tile / multi-buy-purchase
+    state (shop_boost_state, multi_buy_active) and persists the reset.
+    Use this after tapping boost tiles in-game by hand -- the bot's
+    memory only updates from its own taps, so a manual change makes it
+    stale until reset, which would otherwise cause a wrong-direction tap
+    (toggling something back on that's actually already off, chasing a
+    remembered state that's no longer real)."""
+    config["shop_boost_state"] = {}
+    config["multi_buy_active"] = None
+    save_config(config)
 
 
 # ==============================================================
@@ -373,11 +389,41 @@ class Detector:
 # ==============================================================
 #  State handlers (what to click for each detected state)
 # ==============================================================
+# Two different checkbox-style toggles here, synced two different ways:
+#
+# - SHOP_START's own shop_boost_* direct-buy tiles are memory-based
+#   (config["shop_boost_state"]): the bot tracks what it last set each one
+#   to and only acts when that disagrees with the current selection, never
+#   reading the screen. This was forced by extensive live testing: the
+#   tiles sit close enough together that one's real yellow "active" fill
+#   bleeds into a neighbor's crop, right down to identical RGB values in
+#   places, so no amount of crop-shape tuning separated "real signal" from
+#   "bled-in signal" -- confirmed live, more than once.
+#
+# - MULTI_BUY's boost_* checkboxes are screen-read live every visit
+#   (_is_checked_at, a green-checkmark check), not memory-based. This used
+#   to also be memory-based for consistency with the tiles above, but that
+#   caused a real bug: the Random Boost box can reset which boosts are
+#   actually checked in the popup independent of what the bot last set
+#   them to (e.g. after the SHOP_READY mismatch re-buy path reopens it),
+#   and stale memory claiming they were already checked meant nothing got
+#   tapped. Unlike the tightly-packed tiles, this popup's rows have
+#   generous spacing and a checkmark that's visually distinct from
+#   anything else nearby, so a live read here hasn't shown the same
+#   bleed problem -- reading fresh every time is what's actually robust.
+SHOP_BOOST_PREFIX = "shop_boost_"
+
+# Order the direct-buy tiles get synced in -- matches the GUI's display
+# order (cookierun_gui.py's SHOP_BOOST_ORDER), not alphabetical. Anything
+# not listed here (e.g. a new one added later via Coordinate Tuning) just
+# sorts alphabetically after these.
+SHOP_BOOST_ORDER = ["shop_boost_hp_extension", "shop_boost_power_jelly_boost", "shop_boost_double_xp"]
+
+
 def _is_checked_at(img, x_pct, y_pct, half_width_pct=3.0, half_height_pct=3.0):
     """Best-effort check for whether a green checkmark icon is present at
-    this % coordinate -- used so we never blindly tap a boost checkbox that
-    the game already remembers as checked from a previous round (that would
-    just toggle it back off)."""
+    this % coordinate -- used so MULTI_BUY never blindly taps a checkbox
+    without knowing its current state first."""
     w, h = img.size
     cx, cy = x_pct / 100.0 * w, y_pct / 100.0 * h
     x1 = max(0, int(cx - half_width_pct / 100.0 * w))
@@ -390,6 +436,62 @@ def _is_checked_at(img, x_pct, y_pct, half_width_pct=3.0, half_height_pct=3.0):
     r, g, b = arr[:, :, 0], arr[:, :, 1], arr[:, :, 2]
     mask = (g > 140) & (g - r > 30) & (g - b > 30)
     return bool(mask.mean() > 0.05)
+
+
+def _sync_selected_shop_boosts(backend, config, buttons, log):
+    """Makes every known SHOP_START direct-buy boost tile (Double XP / HP
+    Extension / Power Jelly Boost) match its checkbox -- see the module
+    note above on why this is memory-based, not screen-read. Called from
+    both SHOP_START and SHOP_READY: these tiles sit on the same popup
+    either way, and the game can land straight on SHOP_READY -- skipping
+    SHOP_START entirely -- when the MULTI_BUY-based boost (e.g. Double
+    Coins) is already active from a previous round."""
+    def sort_key(name):
+        try:
+            return (0, SHOP_BOOST_ORDER.index(name))
+        except ValueError:
+            return (1, name)
+
+    all_keys = sorted((k for k in buttons if k.startswith(SHOP_BOOST_PREFIX)), key=sort_key)
+    if not all_keys:
+        return
+    selected = set(config.get("selected_shop_boosts", []))
+    state = config.setdefault("shop_boost_state", {})
+    changed = 0
+    for key in all_keys:
+        want = key in selected
+        if state.get(key, False) == want:
+            continue
+        x_pct, y_pct = buttons[key]
+        backend.tap(x_pct, y_pct)
+        time.sleep(0.3)
+        state[key] = want
+        changed += 1
+    if changed:
+        save_config(config)
+        log(f"Shop -> synced {changed} direct-buy boost(s) to match selection")
+
+
+def _go_to_multi_buy_or_play(backend, config, buttons, log):
+    """Re-selects the Random Boost box and opens the Multi tab to (re)buy
+    according to the current selected_boost_buttons, or skips straight to
+    Play if nothing valid is selected. Shared by SHOP_START (nothing
+    purchased yet) and SHOP_READY (the already-active boost no longer
+    matches the current selection and needs a re-buy)."""
+    # Whatever item was last selected in the grid (could be a leftover
+    # HP/speed upgrade pick, not the Random Boost box), re-select the
+    # Random Boost box first so the rest of the flow is always acting on
+    # the right item.
+    backend.tap(*buttons["shop_random_box"])
+    boost_keys = [k for k in config.get("selected_boost_buttons", []) if k in buttons]
+    if not boost_keys:
+        log("Shop -> no boosts selected -- skip buying, go straight to Play!")
+        time.sleep(0.4)
+        backend.tap(*buttons["shop_play"])
+        return
+    log("Shop -> select Random Boost box + open Multi")
+    time.sleep(0.4)
+    backend.tap(*buttons["multi_tab"])
 
 
 def handle(backend, state, config, log):
@@ -424,48 +526,65 @@ def handle(backend, state, config, log):
         log("Lobby -> Play!")
         backend.tap(*buttons["lobby_play"])
     elif state == "SHOP_START":
-        # Whatever item was last selected in the grid (could be a leftover
-        # HP/speed upgrade pick, not the Random Boost box), re-select the
-        # Random Boost box first so the rest of the flow is always acting
-        # on the right item.
-        backend.tap(*buttons["shop_random_box"])
-        boost_keys = [k for k in config.get("selected_boost_buttons", []) if k in buttons]
-        if not boost_keys:
-            log("Shop (no buff yet) -> no boosts selected -- skip buying, go straight to Play!")
-            time.sleep(0.4)
-            backend.tap(*buttons["shop_play"])
-            return
-        log("Shop (no buff yet) -> select Random Boost box + open Multi")
-        time.sleep(0.4)
-        backend.tap(*buttons["multi_tab"])
+        _sync_selected_shop_boosts(backend, config, buttons, log)
+        _go_to_multi_buy_or_play(backend, config, buttons, log)
     elif state == "MULTI_BUY":
-        # The boost checkboxes toggle on tap, and the game remembers your
-        # selection across rounds -- so a boost can already be checked the
-        # very first time we see this popup on a given visit. Only tap a
-        # box if it's actually unchecked right now (checked via the pixels,
-        # not guessed), otherwise tapping it would just uncheck it.
-        boost_keys = config.get("selected_boost_buttons", [])
-        cur = backend.capture()
-        tapped = 0
-        already_checked = 0
-        for boost_key in boost_keys:
-            if boost_key not in buttons:
-                log(f"selected boost '{boost_key}' has no coordinate in config.buttons -- skipping it "
+        # Symmetric sync, checked live off the screen every visit (see the
+        # module note above _is_checked_at for why this one isn't
+        # memory-based): makes every known boost_* checkbox match its
+        # selection, checking ones that are selected-but-unchecked and
+        # unchecking ones that are checked-but-no-longer-selected.
+        selected = set(config.get("selected_boost_buttons", []))
+        valid_selected = set()
+        for key in selected:
+            if key not in buttons:
+                log(f"selected boost '{key}' has no coordinate in config.buttons -- skipping it "
                     f"(use the Coordinate Tuning tab to save it)")
-                continue
-            x_pct, y_pct = buttons[boost_key]
-            if cur is not None and _is_checked_at(cur, x_pct, y_pct):
-                already_checked += 1
+            else:
+                valid_selected.add(key)
+
+        all_keys = sorted(k for k in buttons if k.startswith("boost_"))
+        cur = backend.capture()
+        changed = 0
+        for key in all_keys:
+            x_pct, y_pct = buttons[key]
+            is_checked = cur is not None and _is_checked_at(cur, x_pct, y_pct)
+            want_checked = key in valid_selected
+            if is_checked == want_checked:
                 continue
             backend.tap(x_pct, y_pct)
             time.sleep(0.3)
-            tapped += 1
-        if tapped == 0 and already_checked == 0:
+            changed += 1
+        if changed:
+            log(f"Pick Boosts popup -> synced {changed} boost(s) to match selection")
+
+        if not valid_selected:
             log("Pick Boosts popup -> no valid boosts selected -- not clicking Multi-Buy")
             return
-        log(f"Pick Boosts popup -> {tapped} tapped, {already_checked} already checked -> Multi-Buy")
         backend.tap(*buttons["multi_buy"])
+        # Remember exactly what we bought for -- SHOP_READY compares this
+        # against the current selection to know whether an already-active
+        # boost still matches what's wanted, or needs re-buying.
+        config["multi_buy_active"] = sorted(valid_selected)
+        save_config(config)
     elif state == "SHOP_READY":
+        _sync_selected_shop_boosts(backend, config, buttons, log)
+
+        active = config.get("multi_buy_active")
+        current_selection = set(config.get("selected_boost_buttons", []))
+        if active is None or set(active) != current_selection:
+            # The boost that's already active either doesn't match what's
+            # currently selected, or the bot has no purchase memory at all
+            # (e.g. a fresh restart landing straight on an already-ready
+            # shop) -- either way, re-buy via Multi-Buy instead of playing
+            # with something unverified. Costs currency (600-1200) even
+            # when the active boost might already have been correct, but
+            # a silent mismatch (playing a level with the wrong boost) is
+            # worse than that cost.
+            log("Shop (buff ready) -> active boost unverified/mismatched -- re-buying via Multi-Buy")
+            _go_to_multi_buy_or_play(backend, config, buttons, log)
+            return
+
         log("Shop (buff ready) -> Play!")
         backend.tap(*buttons["shop_play"])
     else:
