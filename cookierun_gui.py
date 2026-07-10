@@ -606,13 +606,24 @@ class App:
             return
         self.adb_path_var.set(path)
         self._log(f"found adb -> {path} (click Save to config.json to keep it)")
-        serial = bot.detect_adb_serial(path)
-        if serial:
-            self.adb_serial_var.set(serial)
-            self._log(f"found connected device -> serial {serial}")
-        else:
-            self._log("no online device from `adb devices` -- is the emulator "
-                       "running with ADB debugging enabled?")
+        self._log("looking for a connected device...")
+
+        # `adb devices` can block for seconds while the adb server starts,
+        # and the port-connect fallback adds a few more -- keep the UI alive.
+        def worker():
+            serial = bot.detect_adb_serial(path)
+
+            def apply():
+                if serial:
+                    self.adb_serial_var.set(serial)
+                    self._log(f"found connected device -> serial {serial}")
+                else:
+                    self._log("no online device from `adb devices` -- is the emulator "
+                               "running with ADB debugging enabled?")
+
+            self.root.after(0, apply)
+
+        threading.Thread(target=worker, daemon=True).start()
 
     def _on_start(self):
         if not self._apply_fields_to_config():

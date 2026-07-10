@@ -31,7 +31,7 @@ from PIL import Image
 # Bump this each time you rebuild the packaged app (see build.bat) so the
 # GUI's title bar shows which build is actually running, and so the update
 # checker can tell a new release apart from what's currently installed.
-APP_VERSION = "1.4.2"
+APP_VERSION = "1.4.3"
 
 # Public repo used for update checks -- see build.bat for how a new release
 # gets published there.
@@ -141,20 +141,41 @@ def find_adb_path(emulator):
     return shutil.which("adb")
 
 
-def detect_adb_serial(adb_path):
-    """Run `adb devices` and return the serial of the first online device,
-    or None. May take a few seconds if the adb server isn't running yet."""
-    creationflags = subprocess.CREATE_NO_WINDOW if hasattr(subprocess, "CREATE_NO_WINDOW") else 0
-    try:
-        out = subprocess.run([adb_path, "devices"], capture_output=True,
-                             timeout=15, creationflags=creationflags).stdout
-    except Exception:
-        return None
+# Loopback ports emulators commonly listen on for ADB. Some emulators
+# (notably MuMu on Windows) never register themselves with the adb
+# server, so `adb devices` stays empty until someone explicitly runs
+# `adb connect 127.0.0.1:<port>` -- verified live: MuMu listened on 7555
+# and 16384 but listed no device until connected.
+ADB_COMMON_PORTS = [5555, 7555, 16384]
+
+
+def _first_online_device(adb_path, creationflags):
+    out = subprocess.run([adb_path, "devices"], capture_output=True,
+                         timeout=15, creationflags=creationflags).stdout
     for line in out.decode(errors="replace").splitlines()[1:]:
         parts = line.split()
         if len(parts) == 2 and parts[1] == "device":
             return parts[0]
     return None
+
+
+def detect_adb_serial(adb_path):
+    """Return the serial of the first online device from `adb devices`,
+    trying `adb connect` on common emulator loopback ports first if
+    nothing is listed. Returns None if no device is found (e.g. the
+    emulator has ADB debugging turned off). May take a few seconds if
+    the adb server isn't running yet."""
+    creationflags = subprocess.CREATE_NO_WINDOW if hasattr(subprocess, "CREATE_NO_WINDOW") else 0
+    try:
+        serial = _first_online_device(adb_path, creationflags)
+        if serial:
+            return serial
+        for port in ADB_COMMON_PORTS:
+            subprocess.run([adb_path, "connect", f"127.0.0.1:{port}"],
+                           capture_output=True, timeout=5, creationflags=creationflags)
+        return _first_online_device(adb_path, creationflags)
+    except Exception:
+        return None
 
 
 # ==============================================================
@@ -312,6 +333,19 @@ class Win32Backend:
     }
 
     def __init__(self, config, log=print):
+        if getattr(sys, "frozen", False):
+            # PyInstaller bundles the pywin32 extension modules into
+            # win32/, win32/lib/ and pythonwin/ subfolders and relies on a
+            # runtime hook to put those on sys.path -- with PyInstaller
+            # 6.21 + hooks-contrib 2026.6 that hook silently didn't get
+            # bundled, shipping a v1.4.2 exe whose window backend died
+            # with "No module named 'win32gui'". Add the paths ourselves
+            # so the frozen app never depends on the hook existing.
+            base = getattr(sys, "_MEIPASS", os.path.dirname(sys.executable))
+            for sub in ("win32", os.path.join("win32", "lib"), "pythonwin"):
+                p = os.path.join(base, sub)
+                if os.path.isdir(p) and p not in sys.path:
+                    sys.path.append(p)
         import win32gui, win32con, win32api, win32ui
         import ctypes
         self.g, self.c, self.a, self.ui = win32gui, win32con, win32api, win32ui

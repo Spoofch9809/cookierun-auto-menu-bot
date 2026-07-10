@@ -68,6 +68,13 @@ progress on the `mac` branch (see MAC.md).
   the bundle and seeds `~/Library/Application Support/CookieRun Bot` at
   startup (cookierun_gui.py top / build_mac.sh). Local test builds are
   NOT quarantined, so this failure only reproduces on a real download.
+- **pywin32 in frozen builds**: PyInstaller bundles the pywin32 .pyds
+  into win32// pythonwin/ subfolders and relies on a runtime hook to put
+  them on sys.path -- PyInstaller 6.21 + hooks-contrib 2026.6 silently
+  dropped that hook, shipping a v1.4.2 exe whose window backend died
+  with "No module named 'win32gui'". Win32Backend.__init__ now appends
+  those _MEIPASS subdirs itself; after any tooling upgrade, verify a
+  fresh exe can actually start the win32 backend before releasing.
 - **Release asset naming**: the Windows in-app updater in
   v1.3.0-v1.4.0 downloads the first release asset whose name starts
   with "CookieRunAutoMenuBot" and ends in ".zip". The Mac zip must
