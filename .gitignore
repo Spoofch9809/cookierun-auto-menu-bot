@@ -1,10 +1,13 @@
-# Build artifacts -- rebuilt by build.bat, never committed. The release zip
-# is what gets attached to a GitHub Release, not committed to git history.
+# Build artifacts -- rebuilt by build.bat (Windows) / build_mac.sh (Mac),
+# never committed. The release zips are what gets attached to a GitHub
+# Release, not committed to git history.
 __pycache__/
 build/
+dist/
 *.spec
 *.exe
 CookieRunAutoMenuBot-v*.zip
+CookieRunAutoMenuBot-Mac-v*.zip
 
 # Personal working captures -- not needed for the app to function,
 # regenerate locally with the Save Screenshot button as needed.

@@ -29,6 +29,11 @@ from PIL import ImageTk
 _IS_FROZEN = getattr(sys, "frozen", False)
 if _IS_FROZEN:
     _app_dir = os.path.dirname(sys.executable)
+    if sys.platform == "darwin":
+        # In a Mac .app, sys.executable sits 3 levels inside the bundle
+        # ("CookieRun Bot.app/Contents/MacOS/") -- the user-visible files
+        # live next to the .app itself, like next to the exe on Windows.
+        _app_dir = os.path.dirname(os.path.dirname(os.path.dirname(_app_dir)))
 else:
     _app_dir = os.path.dirname(os.path.abspath(__file__))
 os.chdir(_app_dir)
@@ -112,6 +117,17 @@ EMULATOR_PRESETS = {
         "adb_serial": "127.0.0.1:7555",
     },
 }
+
+if sys.platform == "darwin":
+    # MuMuPlayer Pro (the macOS edition) registers as a local emulator, not
+    # a 127.0.0.1:<port> TCP endpoint like Windows MuMu. window_title is
+    # irrelevant on Mac (no Window backend) but kept for config symmetry.
+    EMULATOR_PRESETS["mumu"] = {
+        "window_title": "Android Device",
+        "adb_path": ("/Applications/MuMuPlayer Pro.app/Contents/MacOS/"
+                     "MuMu Android Device.app/Contents/MacOS/tools/adb"),
+        "adb_serial": "emulator-5554",
+    }
 
 BOOST_BUTTON_PREFIX = "boost_"
 
@@ -566,14 +582,23 @@ class App:
 
     def _on_detect_adb(self):
         path = bot.find_adb_path(self.emulator_var.get())
-        if path:
-            self.adb_path_var.set(path)
-            self._log(f"found adb.exe -> {path} (click Save to config.json to keep it)")
-        else:
-            self._log("couldn't find adb.exe under common install locations -- "
+        if not path:
+            self._log("couldn't find adb under common install locations -- "
                        "browse your emulator's install folder and paste the path in by hand")
+            return
+        self.adb_path_var.set(path)
+        self._log(f"found adb -> {path} (click Save to config.json to keep it)")
+        serial = bot.detect_adb_serial(path)
+        if serial:
+            self.adb_serial_var.set(serial)
+            self._log(f"found connected device -> serial {serial}")
+        else:
+            self._log("no online device from `adb devices` -- is the emulator "
+                       "running with ADB debugging enabled?")
 
     def _on_start(self):
+        if not self._apply_fields_to_config():
+            return
         self.start_btn.configure(state="disabled")
 
         def worker():
@@ -596,6 +621,9 @@ class App:
         self.status_var.set("stopped")
 
     def _on_save_screenshot(self):
+        if not self._apply_fields_to_config():
+            return
+
         def worker():
             try:
                 backend = self._make_capture_backend()
@@ -621,18 +649,26 @@ class App:
         self._log("boost memory reset -- next sync re-checks everything from scratch "
                    "instead of trusting what it remembered")
 
-    def _on_save_fields(self):
+    def _apply_fields_to_config(self):
+        """Copy the Key Settings entry fields into the live config dict, so
+        the bot runs with what's visible on screen even if "Save to
+        config.json" wasn't clicked. Returns False on invalid thresholds."""
         try:
             state_threshold = float(self.state_threshold_var.get())
             static_threshold = float(self.static_threshold_var.get())
         except ValueError:
             messagebox.showerror("Invalid value", "Thresholds must be numbers.")
-            return
+            return False
         self.config["window_title"] = self.window_title_var.get().strip()
         self.config["adb_path"] = self.adb_path_var.get().strip()
         self.config["adb_serial"] = self.adb_serial_var.get().strip()
         self.config["state_match_threshold"] = state_threshold
         self.config["static_threshold"] = static_threshold
+        return True
+
+    def _on_save_fields(self):
+        if not self._apply_fields_to_config():
+            return
         bot.save_config(self.config)
         self._log("saved key settings to config.json")
 

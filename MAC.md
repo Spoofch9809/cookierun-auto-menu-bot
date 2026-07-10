@@ -66,8 +66,11 @@ backend.
 
 ## Step 3 -- find the emulator's ADB endpoint
 
-The Windows auto-detect ("Detect" button) only knows Windows install
-paths, so on Mac fill these in by hand:
+For MuMuPlayer Pro, select **MuMu Player** and hit **Detect** -- it now
+knows the Mac install path (adb lives inside the app bundle at
+`/Applications/MuMuPlayer Pro.app/Contents/MacOS/MuMu Android
+Device.app/Contents/MacOS/tools/adb`) and falls back to any `adb` on
+PATH. For other emulators, fill in by hand:
 
 - **adb binary**: either bundled with the emulator (check its app folder)
   or install it yourself: `brew install android-platform-tools` -- then
@@ -95,13 +98,31 @@ In the GUI:
    templates line up, then test in Debug mode before letting Run mode
    click anything.
 
+## Optional -- launch it like a real Mac app
+
+`~/Applications/CookieRun Bot.app` is a thin launcher (not a frozen
+build): a 4-line shell script in `Contents/MacOS/` that cd's into this
+working copy and execs `python3 cookierun_gui.py`, plus an icns made
+from `ginger-biscuit.png`. Because it runs from source, `git merge
+origin/main` updates apply on next launch -- no rebuild, which is why we
+deliberately did NOT use PyInstaller/py2app here. Drag it into the Dock
+if you want one-click launch. If the repo path or python changes, edit
+the script inside the bundle.
+
+To give the bot to *other* Mac users, run `./build_mac.sh` -- the macOS
+counterpart of build.bat. It PyInstaller-freezes a standalone "CookieRun
+Bot.app" and packages CookieRunAutoMenuBot-Mac-vX.Y.Z.zip (app +
+sanitized config.json + templates/ + README.txt) for `gh release
+upload`. Apple-Silicon-only and unsigned (downloaders right-click ->
+Open once).
+
 ## Known rough edges on Mac (fine to ignore for now)
 
 - The **"Open config.json"** button errors (`os.startfile` is
   Windows-only). Edit the file in any editor instead.
-- The **emulator picker presets** (LDPlayer / MuMu Player) set Windows
-  window titles and paths -- irrelevant on Mac, only the ADB fields
-  matter.
+- The **emulator picker presets**: MuMu Player is Mac-aware (fills the
+  bundle adb path and `emulator-5554`); LDPlayer has no macOS version so
+  its preset is still the Windows guess.
 - **Update banner / Update Now** is Windows-exe-specific. On Mac you
   update by `git merge origin/main` instead.
 - Coordinates and templates are resolution-independent (percentage

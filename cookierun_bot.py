@@ -18,7 +18,9 @@ import io
 import json
 import os
 import random
+import shutil
 import subprocess
+import sys
 import threading
 import time
 import urllib.request
@@ -71,26 +73,53 @@ GUARD_STATES = {"REVIVE", "WAIT_USER"}
 # best-effort search, not a guarantee. Used by find_adb_path(), which the
 # GUI's "Detect" button calls so a fresh install doesn't need the exact
 # path hand-typed.
-ADB_PATH_GLOBS = {
-    "ld": [
-        r"C:\LDPlayer\LDPlayer*\adb.exe",
-        r"C:\Program Files\LDPlayer\LDPlayer*\adb.exe",
-    ],
-    "mumu": [
-        r"C:\Program Files\Netease\MuMuPlayer\nx_main\adb.exe",
-        r"C:\Program Files\Netease\MuMuPlayer*\**\adb.exe",
-        r"C:\Program Files (x86)\Netease\MuMuPlayer*\**\adb.exe",
-    ],
-}
+if sys.platform == "darwin":
+    ADB_PATH_GLOBS = {
+        "ld": [],  # LDPlayer has no macOS version
+        "mumu": [
+            # MuMuPlayer Pro bundles adb inside a nested .app
+            # (e.g. .../MuMu Android Device.app/Contents/MacOS/tools/adb)
+            "/Applications/MuMuPlayer*.app/Contents/MacOS/*.app/Contents/MacOS/tools/adb",
+        ],
+    }
+else:
+    ADB_PATH_GLOBS = {
+        "ld": [
+            r"C:\LDPlayer\LDPlayer*\adb.exe",
+            r"C:\Program Files\LDPlayer\LDPlayer*\adb.exe",
+        ],
+        "mumu": [
+            r"C:\Program Files\Netease\MuMuPlayer\nx_main\adb.exe",
+            r"C:\Program Files\Netease\MuMuPlayer*\**\adb.exe",
+            r"C:\Program Files (x86)\Netease\MuMuPlayer*\**\adb.exe",
+        ],
+    }
 
 
 def find_adb_path(emulator):
     """Best-effort search of common install locations for this emulator's
-    bundled adb.exe. Returns the first existing match, or None."""
+    bundled adb. Returns the first existing match, else any adb on PATH
+    (e.g. `brew install android-platform-tools`), else None."""
     for pattern in ADB_PATH_GLOBS.get(emulator, []):
         for path in sorted(glob.glob(pattern, recursive=True)):
             if os.path.isfile(path):
                 return path
+    return shutil.which("adb")
+
+
+def detect_adb_serial(adb_path):
+    """Run `adb devices` and return the serial of the first online device,
+    or None. May take a few seconds if the adb server isn't running yet."""
+    creationflags = subprocess.CREATE_NO_WINDOW if hasattr(subprocess, "CREATE_NO_WINDOW") else 0
+    try:
+        out = subprocess.run([adb_path, "devices"], capture_output=True,
+                             timeout=15, creationflags=creationflags).stdout
+    except Exception:
+        return None
+    for line in out.decode(errors="replace").splitlines()[1:]:
+        parts = line.split()
+        if len(parts) == 2 and parts[1] == "device":
+            return parts[0]
     return None
 
 
@@ -138,7 +167,13 @@ class AdbBackend:
         cmd = [self.adb_path, "-s", self.serial, *args]
         creationflags = subprocess.CREATE_NO_WINDOW if hasattr(subprocess, "CREATE_NO_WINDOW") else 0
         if capture:
-            return subprocess.run(cmd, capture_output=True, creationflags=creationflags).stdout
+            # Surface adb's own complaint (bad serial, offline device, ...)
+            # instead of letting PIL choke on empty/garbage stdout later.
+            proc = subprocess.run(cmd, capture_output=True, creationflags=creationflags)
+            if proc.returncode != 0 or not proc.stdout:
+                err = proc.stderr.decode(errors="replace").strip() or f"exit code {proc.returncode}, empty output"
+                raise RuntimeError(f"adb {' '.join(args)} -> {err}")
+            return proc.stdout
         return subprocess.run(cmd, creationflags=creationflags)
 
     def capture(self):
