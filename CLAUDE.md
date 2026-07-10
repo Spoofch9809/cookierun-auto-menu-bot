@@ -100,16 +100,34 @@ progress on the `mac` branch (see MAC.md).
   Windows, then RELEASING.md flow (bump `APP_VERSION`, build.bat,
   commit, tag, push, publish GitHub release with the zip).
 
-## State as of 2026-07-10
+## State as of 2026-07-11
 
-- Latest release: **v1.3.2** (in-app self-update working end-to-end).
-- **Not yet committed/released** (exists only in the Windows PC's
-  working tree): the entire boost-selection sync overhaul -- direct-buy
-  tile sync + ordering, live MULTI_BUY checkbox sync, SHOP_READY
-  mismatch re-buy, Reset Boost Memory button, auto-reset on GUI open,
-  `ENTERED_LEAGUE`-era changes are released; the boost work is not. Do
-  NOT re-implement any of this on the Mac -- it lands on `main` with the
-  next Windows release.
-- Mac port: nothing started beyond MAC.md and the `mac` branch. Next
-  action is MAC.md step 1 (emulator + ADB-on launch test), then running
-  from source with the ADB backend.
+- Latest release: **v1.4.3** (Windows zip only). v1.4.0 shipped the
+  boost-sync overhaul; v1.4.1 fixed Update Now grabbing the Mac zip;
+  v1.4.2 made preserved configs gain new default buttons; v1.4.3 fixed
+  the frozen exe's pywin32 imports (v1.4.2's window backend was dead)
+  and added the adb-connect port fallback to serial detection.
+- Windows/PC: fully working at v1.4.3 (frozen win32 backend verified
+  end-to-end against live LDPlayer). "No online device" on the PC is
+  expected -- LDPlayer runs with ADB debugging off (anti-cheat), and the
+  window backend needs no serial.
+- **OPEN Mac issue** (BlueStacks Air is out -- game blocks it with
+  "Rooted Environment Detected"): on Mac + MuMuPlayer Pro, both source
+  and the frozen app (v1.4.3) find the bundled adb fine but
+  `adb devices` lists NO device, so capture fails with "device
+  'emulator-5554/5555' not found". MuMu Pro's Developer settings show
+  ADB "Try to use the default port (5555)" ENABLED and Root Access off.
+  The v1.4.3 fallback already tries `adb connect 127.0.0.1:5555/7555/
+  16384` -- still nothing. Next debug steps ON THE MAC:
+  1. Confirm the Android instance is actually booted (and the 7-day
+     trial hasn't expired -- prime suspect for a setup that worked
+     before and stopped).
+  2. `ADB=".../MuMuPlayer Pro.app/Contents/MacOS/MuMu Android
+     Device.app/Contents/MacOS/tools/adb"; "$ADB" kill-server;
+     "$ADB" devices` -- also check for a conflicting adb server from
+     another install: `ps aux | grep adb`.
+  3. If still empty: `lsof -iTCP -sTCP:LISTEN -P | grep -i mumu`, then
+     `"$ADB" connect 127.0.0.1:<each port>` and re-check devices.
+  4. Working serial goes in the GUI's ADB serial field + Save. Then add
+     the working port to ADB_COMMON_PORTS and make the Mac MuMu preset
+     default to that serial so Detect alone configures everything.
