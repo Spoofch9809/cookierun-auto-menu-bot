@@ -14,6 +14,7 @@ Only stdlib (tkinter) + pillow/numpy (already required by the engine).
 
 import os
 import queue
+import shutil
 import subprocess
 import sys
 import threading
@@ -27,13 +28,30 @@ from PIL import ImageTk
 # always found next to the exe (or this script), regardless of whatever
 # directory the app happened to be launched from.
 _IS_FROZEN = getattr(sys, "frozen", False)
-if _IS_FROZEN:
+if _IS_FROZEN and sys.platform == "darwin":
+    # "Files next to the app" doesn't work on Mac: Gatekeeper translocates
+    # a downloaded (quarantined) .app to a random read-only path on launch,
+    # so anything sitting beside the real bundle is invisible. Instead the
+    # .app carries config.json + templates/ inside it (build_mac.sh) and
+    # live state goes to Application Support, seeded on first run.
+    _app_dir = os.path.expanduser("~/Library/Application Support/CookieRun Bot")
+    os.makedirs(_app_dir, exist_ok=True)
+    _bundled = sys._MEIPASS
+    if not os.path.exists(os.path.join(_app_dir, "config.json")):
+        shutil.copy(os.path.join(_bundled, "config.json"), _app_dir)
+    # Top up templates a newer release added (including subfolders like
+    # templates/lobby/); never overwrite existing ones (they may be
+    # locally re-captured for this user's setup).
+    _src_templates = os.path.join(_bundled, "templates")
+    for _root, _dirs, _files in os.walk(_src_templates):
+        _rel = os.path.relpath(_root, _src_templates)
+        _dst_dir = os.path.join(_app_dir, "templates", _rel)
+        os.makedirs(_dst_dir, exist_ok=True)
+        for _fn in _files:
+            if not os.path.exists(os.path.join(_dst_dir, _fn)):
+                shutil.copy(os.path.join(_root, _fn), _dst_dir)
+elif _IS_FROZEN:
     _app_dir = os.path.dirname(sys.executable)
-    if sys.platform == "darwin":
-        # In a Mac .app, sys.executable sits 3 levels inside the bundle
-        # ("CookieRun Bot.app/Contents/MacOS/") -- the user-visible files
-        # live next to the .app itself, like next to the exe on Windows.
-        _app_dir = os.path.dirname(os.path.dirname(os.path.dirname(_app_dir)))
 else:
     _app_dir = os.path.dirname(os.path.abspath(__file__))
 os.chdir(_app_dir)
