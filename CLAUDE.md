@@ -61,6 +61,13 @@ progress on the `mac` branch (see MAC.md).
   None or differs from the current selection, the bot re-buys rather
   than playing with an unverified boost (user's explicit choice: prefer
   spending coins over silently playing with the wrong boost).
+- **Mac .app distribution**: a downloaded (quarantined) .app is
+  Gatekeeper-translocated to a random read-only path on launch, so the
+  Windows zip's "config.json/templates next to the binary" layout
+  silently loads DEFAULTS for downloaders. The Mac build bakes both into
+  the bundle and seeds `~/Library/Application Support/CookieRun Bot` at
+  startup (cookierun_gui.py top / build_mac.sh). Local test builds are
+  NOT quarantined, so this failure only reproduces on a real download.
 - **Anti-cheat**: the game refuses to launch while ADB debugging is
   enabled -- that's the entire reason the win32 window-capture backend
   exists on Windows. The Mac port has no window backend, so MAC.md's
