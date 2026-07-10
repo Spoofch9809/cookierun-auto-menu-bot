@@ -51,8 +51,12 @@ CookieRun Auto Menu Bot -- macOS (Apple Silicon)
 
 1. Keep this folder together: the app reads config.json and templates/
    from the folder it sits in. Move the whole folder, not just the app.
-2. First launch: right-click "CookieRun Bot.app" -> Open -> Open.
-   (The app is unsigned, so macOS blocks a plain double-click once.)
+2. First launch: the app is unsigned, so macOS will say it can't verify
+   it is free of malware. One-time fix:
+     - Double-click the app, click "Done" (NOT "Move to Trash").
+     - System Settings -> Privacy & Security -> scroll down ->
+       "Open Anyway" next to the CookieRun Bot message, authenticate.
+   (On macOS 14 or older, right-click the app -> Open -> Open works too.)
 3. Requires MuMuPlayer Pro with ADB debugging enabled. In the app, hit
    "Detect" next to ADB path, then "Save to config.json".
 4. The app starts in Debug mode (screenshots only, no clicking). Switch
