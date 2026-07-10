@@ -31,7 +31,7 @@ from PIL import Image
 # Bump this each time you rebuild the packaged app (see build.bat) so the
 # GUI's title bar shows which build is actually running, and so the update
 # checker can tell a new release apart from what's currently installed.
-APP_VERSION = "1.4.0"
+APP_VERSION = "1.4.1"
 
 # Public repo used for update checks -- see build.bat for how a new release
 # gets published there.
@@ -753,8 +753,14 @@ def check_for_update(current_version=APP_VERSION, repo=GITHUB_REPO, timeout=5):
         if latest and _parse_version(latest) > _parse_version(current_version):
             asset_url = None
             for asset in data.get("assets", []):
-                name = asset.get("name", "")
-                if name.lower().startswith("cookierunautomenubot") and name.lower().endswith(".zip"):
+                name = asset.get("name", "").lower()
+                # This updater only knows how to install the Windows exe
+                # zip -- releases also carry a Mac zip (built by
+                # build_mac.sh), which must never be picked here: it
+                # sorts alphabetically before the Windows one, and
+                # grabbing it made Update Now fail with "exe not found
+                # inside the downloaded zip" on every install.
+                if name.startswith("cookierunautomenubot") and name.endswith(".zip") and "mac" not in name:
                     asset_url = asset.get("browser_download_url")
                     break
             return latest, page_url, asset_url

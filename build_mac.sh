@@ -1,7 +1,12 @@
 #!/bin/zsh
 # macOS counterpart of build.bat: rebuilds "CookieRun Bot.app" from the
-# current source and packages CookieRunAutoMenuBot-Mac-vX.Y.Z.zip, ready
+# current source and packages Mac-CookieRunAutoMenuBot-vX.Y.Z.zip, ready
 # to attach to the GitHub release.
+#
+# The zip name deliberately does NOT start with "CookieRunAutoMenuBot":
+# the Windows in-app updater in v1.3.0-v1.4.0 picks the first release
+# asset with that prefix, and the Mac zip sorting first broke Update Now
+# for every Windows install. Keep the "Mac-" prefix FIRST.
 #
 # Unlike the Windows zip, config.json and templates/ are baked INTO the
 # .app: Gatekeeper translocation runs a downloaded .app from a random
@@ -50,7 +55,7 @@ python3 -m PyInstaller --windowed --name "CookieRun Bot" \
     cookierun_gui.py
 
 VERSION=$(python3 -c "import cookierun_bot; print(cookierun_bot.APP_VERSION)")
-ZIP="CookieRunAutoMenuBot-Mac-v${VERSION}.zip"
+ZIP="Mac-CookieRunAutoMenuBot-v${VERSION}.zip"
 STAGE="build/mac_zip/CookieRunAutoMenuBot-Mac"
 rm -rf build/mac_zip "$ZIP"
 mkdir -p "$STAGE"

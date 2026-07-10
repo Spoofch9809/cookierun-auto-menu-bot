@@ -111,7 +111,7 @@ the script inside the bundle.
 
 To give the bot to *other* Mac users, run `./build_mac.sh` -- the macOS
 counterpart of build.bat. It PyInstaller-freezes a standalone "CookieRun
-Bot.app" and packages CookieRunAutoMenuBot-Mac-vX.Y.Z.zip (app +
+Bot.app" and packages Mac-CookieRunAutoMenuBot-vX.Y.Z.zip (app +
 sanitized config.json + templates/ + README.txt) for `gh release
 upload`. Apple-Silicon-only and unsigned (downloaders right-click ->
 Open once).

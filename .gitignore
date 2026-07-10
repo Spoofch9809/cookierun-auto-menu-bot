@@ -8,6 +8,7 @@ dist/
 *.exe
 CookieRunAutoMenuBot-v*.zip
 CookieRunAutoMenuBot-Mac-v*.zip
+Mac-CookieRunAutoMenuBot-v*.zip
 
 # Personal working captures -- not needed for the app to function,
 # regenerate locally with the Save Screenshot button as needed.

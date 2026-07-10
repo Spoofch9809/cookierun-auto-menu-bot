@@ -68,6 +68,13 @@ progress on the `mac` branch (see MAC.md).
   the bundle and seeds `~/Library/Application Support/CookieRun Bot` at
   startup (cookierun_gui.py top / build_mac.sh). Local test builds are
   NOT quarantined, so this failure only reproduces on a real download.
+- **Release asset naming**: the Windows in-app updater in
+  v1.3.0-v1.4.0 downloads the first release asset whose name starts
+  with "CookieRunAutoMenuBot" and ends in ".zip". The Mac zip must
+  therefore keep its "Mac-" prefix FIRST
+  (`Mac-CookieRunAutoMenuBot-vX.Y.Z.zip`, see build_mac.sh) -- when it
+  was named with the shared prefix it sorted before the Windows zip and
+  broke Update Now for every existing install.
 - **Anti-cheat**: the game refuses to launch while ADB debugging is
   enabled -- that's the entire reason the win32 window-capture backend
   exists on Windows. The Mac port has no window backend, so MAC.md's
