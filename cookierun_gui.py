@@ -137,14 +137,18 @@ EMULATOR_PRESETS = {
 }
 
 if sys.platform == "darwin":
-    # MuMuPlayer Pro (the macOS edition) registers as a local emulator, not
-    # a 127.0.0.1:<port> TCP endpoint like Windows MuMu. window_title is
-    # irrelevant on Mac (no Window backend) but kept for config symmetry.
+    # MuMuPlayer Pro (the macOS edition) is a 127.0.0.1:<port> TCP endpoint
+    # like Windows MuMu, but the port is dynamic per instance (observed:
+    # 26624) and never registers with the adb server on its own -- Detect
+    # scans the running MuMu process's listening ports (bot._mumu_mac_ports)
+    # and adb-connects, so this serial is only the last-known-good starting
+    # point. window_title is irrelevant on Mac (no Window backend) but kept
+    # for config symmetry.
     EMULATOR_PRESETS["mumu"] = {
         "window_title": "Android Device",
         "adb_path": ("/Applications/MuMuPlayer Pro.app/Contents/MacOS/"
                      "MuMu Android Device.app/Contents/MacOS/tools/adb"),
-        "adb_serial": "emulator-5554",
+        "adb_serial": "127.0.0.1:26624",
     }
 
 BOOST_BUTTON_PREFIX = "boost_"

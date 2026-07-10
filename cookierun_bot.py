@@ -145,8 +145,41 @@ def find_adb_path(emulator):
 # (notably MuMu on Windows) never register themselves with the adb
 # server, so `adb devices` stays empty until someone explicitly runs
 # `adb connect 127.0.0.1:<port>` -- verified live: MuMu listened on 7555
-# and 16384 but listed no device until connected.
-ADB_COMMON_PORTS = [5555, 7555, 16384]
+# and 16384 but listed no device until connected. 26624 = MuMuPlayer Pro
+# on Mac (dynamic per instance -- _mumu_mac_ports() finds the real one,
+# this is just the observed value kept as a fallback).
+ADB_COMMON_PORTS = [5555, 7555, 16384, 26624]
+
+
+def _mumu_mac_ports():
+    """MuMuPlayer Pro on macOS picks its ADB port dynamically (observed:
+    26624) and honors no 'default port 5555' setting, so ask lsof which
+    TCP ports the running 'MuMu Android Device' process is listening on.
+    Returns [] off-macOS or when MuMu isn't running."""
+    if sys.platform != "darwin":
+        return []
+    try:
+        out = subprocess.run(["lsof", "-iTCP", "-sTCP:LISTEN", "-P", "-n"],
+                             capture_output=True, timeout=10).stdout
+    except Exception:
+        return []
+    # Two MuMu processes listen: the ADB port belongs to "MuMu Android
+    # Device" (lsof truncates + escapes the space: "MuMu\x20A"), while the
+    # "MuMuPlaye" shell's ports (20000/21000) never speak ADB -- try the
+    # Android Device's ports first so detection doesn't burn ~5s each on
+    # the wrong ones.
+    android, other = [], []
+    for line in out.decode(errors="replace").splitlines():
+        if not line.startswith("MuMu"):
+            continue
+        # NAME column, e.g. "*:26624" or "127.0.0.1:28672"
+        addr = line.split()[-2] if line.endswith("(LISTEN)") else line.split()[-1]
+        port = addr.rsplit(":", 1)[-1]
+        if port.isdigit():
+            bucket = android if line.startswith(("MuMu\\x20A", "MuMu A")) else other
+            if int(port) not in bucket:
+                bucket.append(int(port))
+    return android + [p for p in other if p not in android]
 
 
 def _first_online_device(adb_path, creationflags):
@@ -166,16 +199,33 @@ def detect_adb_serial(adb_path):
     emulator has ADB debugging turned off). May take a few seconds if
     the adb server isn't running yet."""
     creationflags = subprocess.CREATE_NO_WINDOW if hasattr(subprocess, "CREATE_NO_WINDOW") else 0
-    try:
-        serial = _first_online_device(adb_path, creationflags)
+
+    # Each step gets its own try: one hung port (or the extra seconds the
+    # first adb call spends spawning the server daemon) must not abort the
+    # whole scan -- that bug made Detect return None with MuMu running.
+    def try_step(args, timeout):
+        try:
+            subprocess.run([adb_path, *args], capture_output=True,
+                           timeout=timeout, creationflags=creationflags)
+        except Exception:
+            pass
+
+    def online_device():
+        try:
+            return _first_online_device(adb_path, creationflags)
+        except Exception:
+            return None
+
+    try_step(["start-server"], 20)
+    serial = online_device()
+    if serial:
+        return serial
+    for port in _mumu_mac_ports() + ADB_COMMON_PORTS:
+        try_step(["connect", f"127.0.0.1:{port}"], 5)
+        serial = online_device()
         if serial:
             return serial
-        for port in ADB_COMMON_PORTS:
-            subprocess.run([adb_path, "connect", f"127.0.0.1:{port}"],
-                           capture_output=True, timeout=5, creationflags=creationflags)
-        return _first_online_device(adb_path, creationflags)
-    except Exception:
-        return None
+    return None
 
 
 # ==============================================================

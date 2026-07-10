@@ -111,23 +111,26 @@ progress on the `mac` branch (see MAC.md).
   end-to-end against live LDPlayer). "No online device" on the PC is
   expected -- LDPlayer runs with ADB debugging off (anti-cheat), and the
   window backend needs no serial.
-- **OPEN Mac issue** (BlueStacks Air is out -- game blocks it with
-  "Rooted Environment Detected"): on Mac + MuMuPlayer Pro, both source
-  and the frozen app (v1.4.3) find the bundled adb fine but
-  `adb devices` lists NO device, so capture fails with "device
-  'emulator-5554/5555' not found". MuMu Pro's Developer settings show
-  ADB "Try to use the default port (5555)" ENABLED and Root Access off.
-  The v1.4.3 fallback already tries `adb connect 127.0.0.1:5555/7555/
-  16384` -- still nothing. Next debug steps ON THE MAC:
-  1. Confirm the Android instance is actually booted (and the 7-day
-     trial hasn't expired -- prime suspect for a setup that worked
-     before and stopped).
-  2. `ADB=".../MuMuPlayer Pro.app/Contents/MacOS/MuMu Android
-     Device.app/Contents/MacOS/tools/adb"; "$ADB" kill-server;
-     "$ADB" devices` -- also check for a conflicting adb server from
-     another install: `ps aux | grep adb`.
-  3. If still empty: `lsof -iTCP -sTCP:LISTEN -P | grep -i mumu`, then
-     `"$ADB" connect 127.0.0.1:<each port>` and re-check devices.
-  4. Working serial goes in the GUI's ADB serial field + Save. Then add
-     the working port to ADB_COMMON_PORTS and make the Mac MuMu preset
-     default to that serial so Detect alone configures everything.
+- **RESOLVED 2026-07-11 -- Mac MuMu detection** (BlueStacks Air remains
+  out: game blocks it with "Rooted Environment Detected"). Root cause:
+  MuMu Pro on Mac ignores its "default port (5555)" setting and listens
+  on a DYNAMIC per-instance port (observed 26624) that never registers
+  with the adb server, so `adb devices` stayed empty and the 5555/7555/
+  16384 connect fallback missed it. Fixes (on the Mac working copy,
+  needs commit to `mac` + merge to main):
+  1. `_mumu_mac_ports()` in cookierun_bot.py: lsof-scans the running
+     "MuMu Android Device" process's listening TCP ports (tried before
+     ADB_COMMON_PORTS; Android Device process ports before the
+     MuMuPlayer shell's 20000/21000, which never speak ADB).
+  2. `detect_adb_serial()` rewritten: adb start-server first (20s), then
+     per-port try/except -- the old whole-scan `except: return None`
+     aborted everything when the first adb call spent >5s spawning the
+     server daemon. Checks devices after EACH connect and stops at the
+     first online serial.
+  3. 26624 added to ADB_COMMON_PORTS; Mac MuMu preset serial is now
+     127.0.0.1:26624 (last-known-good hint only -- Detect finds the real
+     one).
+  Verified on the Mac: cold-start Detect finds 127.0.0.1:26624 in ~5s
+  and AdbBackend.capture() returns live 1600x900 game frames -- so the
+  game TOLERATES an active adb connection on MuMu Pro Mac (anti-cheat
+  step-1 gate passed, at least when connecting after launch).
