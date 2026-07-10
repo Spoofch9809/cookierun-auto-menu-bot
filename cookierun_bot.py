@@ -31,7 +31,7 @@ from PIL import Image
 # Bump this each time you rebuild the packaged app (see build.bat) so the
 # GUI's title bar shows which build is actually running, and so the update
 # checker can tell a new release apart from what's currently installed.
-APP_VERSION = "1.4.1"
+APP_VERSION = "1.4.2"
 
 # Public repo used for update checks -- see build.bat for how a new release
 # gets published there.
@@ -62,7 +62,41 @@ DEFAULTS = {
     "selected_shop_boosts": [],
     "multi_buy_active": None,
     "shop_boost_state": {},
-    "buttons": {},
+    # Standard 16:9 layout coordinates (% of screen). These are MERGED
+    # under the on-disk config.json's buttons in load_config(), so a
+    # config preserved across self-updates automatically gains buttons
+    # introduced by newer versions -- without this, the v1.3.x -> v1.4.x
+    # update hid the whole direct-buy boost feature, because the updater
+    # (correctly) never overwrites the user's config.json and the new
+    # shop_boost_* coordinates only existed in the freshly shipped one.
+    # User-tuned values for existing keys always win over these.
+    "buttons": {
+        "ok": [36.0, 87.0],
+        "open_all": [50.0, 90.0],
+        "confirm": [50.0, 90.0],
+        "entered_league_confirm": [49.96, 63.28],
+        "lobby_play": [74.0, 89.0],
+        "shop_random_box": [41.72, 79.51],
+        "multi_tab": [85.0, 30.0],
+        "multi_buy": [50.0, 82.0],
+        "shop_play": [70.0, 85.0],
+        "daily_checkin_confirm": [49.63, 78.16],
+        "daily_checkin_ok": [49.86, 90.81],
+        "boost_double_coins": [22.4, 23.9],
+        "boost_score_bonus": [52.3, 23.9],
+        "boost_hp_drain": [22.4, 30.79],
+        "boost_revive_buff": [52.31, 30.77],
+        "boost_crush_chance": [22.44, 37.63],
+        "boost_base_speed": [52.31, 37.64],
+        "boost_coin_magic": [22.44, 44.51],
+        "boost_collision_damage": [52.28, 44.54],
+        "boost_hp_potions": [22.44, 51.39],
+        "boost_magnetic_aura": [52.27, 51.42],
+        "boost_pit_lifts": [22.43, 58.3],
+        "shop_boost_hp_extension": [15.74, 62.28],
+        "shop_boost_power_jelly_boost": [29.42, 61.51],
+        "shop_boost_double_xp": [41.12, 62.24],
+    },
 }
 
 # States that must never be clicked, no matter what.
@@ -131,6 +165,14 @@ def load_config(path=CONFIG_PATH):
     if os.path.exists(path):
         with open(path, "r", encoding="utf-8") as f:
             on_disk = json.load(f)
+        # Dict-valued settings merge key-by-key instead of being replaced
+        # wholesale, so a config.json preserved across self-updates still
+        # picks up buttons/regions introduced by newer versions (see the
+        # DEFAULTS["buttons"] comment). On-disk values win per key.
+        for key in ("buttons", "state_region"):
+            merged = dict(cfg.get(key, {}))
+            merged.update(on_disk.get(key, {}))
+            on_disk[key] = merged
         cfg.update(on_disk)
     return cfg
 
