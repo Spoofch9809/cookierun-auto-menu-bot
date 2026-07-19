@@ -31,7 +31,7 @@ from PIL import Image
 # Bump this each time you rebuild the packaged app (see build.bat) so the
 # GUI's title bar shows which build is actually running, and so the update
 # checker can tell a new release apart from what's currently installed.
-APP_VERSION = "1.4.3"
+APP_VERSION = "1.5.0"
 
 # Public repo used for update checks -- see build.bat for how a new release
 # gets published there.

@@ -156,7 +156,7 @@ BOOST_BUTTON_PREFIX = "boost_"
 # Temporary: only these are considered tested/ready. Other boosts show up
 # (greyed out) but can't be checked yet -- remove an entry here once
 # you've verified that boost's SHOP_READY detection actually works.
-ENABLED_BOOSTS = {"boost_double_coins", "boost_magnetic_aura"}
+ENABLED_BOOSTS = {"boost_double_coins", "boost_magnetic_aura", "boost_base_speed"}
 
 # Direct-buy tiles in SHOP_START's own "Buy some Boosts!" panel (Double XP /
 # HP Extension / Power Jelly Boost) -- a separate purchase flow from the
